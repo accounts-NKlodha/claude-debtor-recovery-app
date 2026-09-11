@@ -49,6 +49,7 @@ export type WorkflowEvent =
   | { type: "TIMER_7D_ELAPSED" }
   | { type: "MSME_ELIGIBILITY_DECIDED"; eligible: boolean }
   | { type: "MSME_ODR_FILED" }
+  | { type: "DD_PREPARED" }
   | { type: "HEARING_SCHEDULED" }
   | { type: "PAYMENT_CONFIRMED"; fullSettlement: boolean }
   | { type: "DISPUTE_RESOLVED"; recovered: boolean }
@@ -349,6 +350,34 @@ export function advance(state: WorkflowState, event: WorkflowEvent): Transition 
       break;
 
     case "msme_odr_filed":
+      if (event.type === "DD_PREPARED") {
+        return {
+          next: set(state, {
+            status: "msefc_dd",
+            waitingOn: "client",
+            blocker: "Client to pay ₹1,000 demand draft to the MSEFC",
+            nextAction: "Track DD payment and dispatch; await hearing date",
+          }),
+          note: "DD task prepared for MSEFC filing",
+          effect: { kind: "raise_task", task: "dd_preparation", waitingOn: "client", urgent: false },
+        };
+      }
+      if (event.type === "HEARING_SCHEDULED") {
+        return {
+          next: set(state, {
+            status: "hearing_scheduled",
+            waitingOn: "portal",
+            blocker: "Awaiting hearing",
+            nextAction: "Attend hearing; track order",
+          }),
+          note: "Hearing scheduled",
+          effect: { kind: "raise_task", task: "hearing_followup", waitingOn: "staff", urgent: false },
+        };
+      }
+      if (event.type === "PAYMENT_CONFIRMED") return partialPayment(state);
+      break;
+
+    case "msefc_dd":
       if (event.type === "HEARING_SCHEDULED") {
         return {
           next: set(state, {

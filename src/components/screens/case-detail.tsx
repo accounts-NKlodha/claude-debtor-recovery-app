@@ -27,6 +27,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LinkButton } from "@/components/ui/link-button";
 import { SendReminderButton } from "./send-reminder-button";
+import { DdHearingActions } from "./dd-hearing-actions";
 
 export interface CaseDetailVM {
   kase: RecoveryCase;
@@ -97,6 +98,7 @@ export function CaseDetail({ vm }: { vm: CaseDetailVM }) {
             </div>
           ) : null}
           {kase.status === "active" ? <SendReminderButton caseId={kase.id} /> : null}
+          <DdHearingActions caseId={kase.id} status={kase.status} />
         </div>
 
         <Tabs defaultValue="timeline">

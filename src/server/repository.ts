@@ -144,4 +144,15 @@ export interface Repository {
   captureMsmeAcknowledgement(
     caseId: string,
   ): Promise<{ case: RecoveryCase; diaryNumber: string | null; petitionPdfKey: string | null }>;
+
+  /**
+   * DD / hearing tracking (PRD §12). DD preparation and the physical demand
+   * draft remain human/manual; scheduling a hearing creates a calendar event
+   * through the calendar adapter.
+   */
+  prepareDdTask(caseId: string): Promise<{ case: RecoveryCase }>;
+  scheduleHearing(
+    caseId: string,
+    startsAtIso: string,
+  ): Promise<{ case: RecoveryCase; eventId: string | null }>;
 }

@@ -17,6 +17,7 @@ import {
 } from "@/domain/reminder";
 import { applyGstAutomationFailed, applyGstFiled, applyGstPrepared } from "@/domain/gst";
 import { applyMsmeAutomationFailed, applyMsmeFiled } from "@/domain/msme";
+import { applyDdPrepared, applyHearingScheduled } from "@/domain/hearing";
 import { runAdapter } from "@/orchestrator/run-adapter";
 import { getAdapters } from "@/adapters";
 import { gstComposeSchema, type GstComposeInput } from "@/contract/schemas";
@@ -465,5 +466,50 @@ export class MemoryRepository implements Repository {
     });
 
     return tick({ case: updatedCase, diaryNumber, petitionPdfKey });
+  }
+
+  async prepareDdTask(caseId: string) {
+    const kase = mock.getCase(caseId);
+    if (!kase) throw new Error(`prepareDdTask: case ${caseId} not found`);
+    const prepared = applyDdPrepared(kase);
+    const updatedCase = mock.mutateCase(caseId, prepared.updatedCase);
+    mock.appendAudit({
+      action: "dd.prepared",
+      entity: "recovery_case",
+      entityId: caseId,
+      reason: prepared.note,
+    });
+    return tick({ case: updatedCase });
+  }
+
+  async scheduleHearing(caseId: string, startsAtIso: string) {
+    const kase = mock.getCase(caseId);
+    if (!kase) throw new Error(`scheduleHearing: case ${caseId} not found`);
+    const startsAt = new Date(startsAtIso);
+    if (Number.isNaN(startsAt.getTime())) throw new Error(`scheduleHearing: invalid date "${startsAtIso}"`);
+
+    const idempotencyKey = `hearing:${caseId}:${startsAtIso}`;
+    const outcome = await runAdapter(
+      (key) =>
+        getAdapters().calendar.upsertEvent({
+          idempotencyKey: key,
+          caseId,
+          title: `MSEFC hearing — case ${caseId}`,
+          startsAt: startsAt.toISOString(),
+          kind: "hearing",
+        }),
+      idempotencyKey,
+    );
+
+    const scheduled = applyHearingScheduled(kase, startsAt);
+    const updatedCase = mock.mutateCase(caseId, scheduled.updatedCase);
+    mock.appendAudit({
+      action: "hearing.scheduled",
+      entity: "recovery_case",
+      entityId: caseId,
+      reason: `${scheduled.note}; calendar event ${outcome.result.data?.eventId ?? "n/a"}`,
+    });
+
+    return tick({ case: updatedCase, eventId: outcome.result.data?.eventId ?? null });
   }
 }

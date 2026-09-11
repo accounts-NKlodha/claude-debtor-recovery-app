@@ -528,4 +528,20 @@ export class SupabaseRepository implements Repository {
     // applyMsmeAutomationFailed() and raise an urgent audit_events row.
     throw new Error("SupabaseRepository.captureMsmeAcknowledgement: not wired yet -- see src/domain/msme.ts");
   }
+
+  async prepareDdTask(_caseId: string): Promise<{ case: RecoveryCase }> {
+    // TODO(api): UPDATE the case via src/domain/hearing.ts applyDdPrepared(),
+    // INSERT a workflow_tasks row (dd_preparation, waiting_on client), audit it.
+    throw new Error("SupabaseRepository.prepareDdTask: not wired yet -- see src/domain/hearing.ts");
+  }
+
+  async scheduleHearing(
+    _caseId: string,
+    _startsAtIso: string,
+  ): Promise<{ case: RecoveryCase; eventId: string | null }> {
+    // TODO(api): call the calendar adapter's upsertEvent() through
+    // run-adapter.ts, UPDATE the case via applyHearingScheduled(), INSERT a
+    // calendar_events row, audit it.
+    throw new Error("SupabaseRepository.scheduleHearing: not wired yet -- see src/domain/hearing.ts");
+  }
 }
