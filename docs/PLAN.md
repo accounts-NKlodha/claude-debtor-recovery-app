@@ -23,7 +23,8 @@ tasks share no files; shared-contract edits are serialized.
 ## Phase 2 — Build (parallel where marked ∥)
 
 - [ ] 2.1 ∥ **M1 Tenancy/RLS**: migrations `0001_init` / `0002_rls` / `0003_seed`; `current_app_user_id()`, client-org policies; audit append-only. Test: client cannot read another org (scenario 12) `[gate]`
-- [ ] 2.2 ∥ **M9 Dashboards UI**: `/today` exception queue, `/cases` table, `/cases/[id]` detail with automation-state panel, `/client` overview `[gate]`
+- [x] 2.2 ∥ **M9 Dashboards UI**: `/today` exception queue, `/cases` table, `/cases/[id]` detail with automation-state panel, `/client` overview `[gate]`
+- [x] 2.2b **Repository seam**: `src/server/repository.ts` interface + `MemoryRepository` (default, tested) + `SupabaseRepository` (type-checked, not live-verified) + `getRepo()` factory. Every page reads through it instead of `@/lib/mock-data` directly `[gate]`
 - [ ] 2.3 **M2 Intake**: manual invoice form (zod), bulk CSV import → `ImportResult` report UI, OCR review screen with provenance. Tests: scenarios 0,1,2 `[gate]`
 - [ ] 2.4 **M3 Workflow API**: persist `orchestration_runs`/`step_attempts`, wire `advance()` to a job runner (pg-boss-style interface, in-memory impl for pilot), timer scheduling. Tests: scenarios 3,4,14,15,16 `[gate]`
 - [ ] 2.5 **M4 Payments**: record payment + `allocateRecovery` persistence, client-confirm toggle → cancel escalation. Test: scenario 7 `[gate]`
