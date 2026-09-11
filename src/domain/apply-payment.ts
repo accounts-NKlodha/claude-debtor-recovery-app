@@ -9,7 +9,7 @@
  */
 
 import { allocateRecovery, type AllocatableInvoice } from "./allocation";
-import { advance, type WorkflowState } from "./workflow";
+import { advance, caseToWorkflowState, transitionToCasePatch } from "./workflow";
 import type { RecoveryCase } from "@/contract/types";
 
 export interface ApplyPaymentResult {
@@ -17,23 +17,6 @@ export interface ApplyPaymentResult {
   invoiceAllocations: ReturnType<typeof allocateRecovery>["allocations"];
   unapplied: number;
   note: string;
-}
-
-function caseToWorkflowState(c: RecoveryCase): WorkflowState {
-  return {
-    status: c.status,
-    waitingOn: c.waitingOn,
-    blocker: c.blocker,
-    nextAction: c.nextScheduledAction,
-    eligibilityRoute: c.eligibilityRoute,
-    // A case reaching payment confirmation has already cleared the
-    // activation gates; PAYMENT_CONFIRMED handling doesn't re-check them.
-    clientCertified: true,
-    staffValidated: true,
-    ageGatePassed: true,
-    principalOutstanding: c.principalOutstanding,
-    recoveredToDate: c.recoveredToDate,
-  };
 }
 
 export function applyConfirmedPayment(
@@ -63,11 +46,7 @@ export function applyConfirmedPayment(
 
   const updatedCase: RecoveryCase = {
     ...kase,
-    status: transition.next.status,
-    waitingOn: transition.next.waitingOn,
-    blocker: transition.next.blocker,
-    nextScheduledAction: transition.next.nextAction,
-    eligibilityRoute: transition.next.eligibilityRoute,
+    ...transitionToCasePatch(transition.next),
     // Allocation is authoritative for partial payments; for a full
     // settlement it agrees with advance()'s own principal/recovered reset.
     principalOutstanding: newPrincipalOutstanding,

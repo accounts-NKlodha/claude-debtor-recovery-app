@@ -9,7 +9,15 @@
 import { nanoid } from "nanoid";
 import * as mock from "@/lib/mock-data";
 import { applyConfirmedPayment } from "@/domain/apply-payment";
-import type { PaymentRecord } from "@/contract/types";
+import {
+  applyReminderDelivered,
+  applyReminderDeliveryFailed,
+  applyReminderSent,
+  buildReminderMessage,
+} from "@/domain/reminder";
+import { runAdapter } from "@/orchestrator/run-adapter";
+import { getAdapters } from "@/adapters";
+import type { Communication, PaymentRecord } from "@/contract/types";
 import type { AgeingBucket, DashboardKpis, Repository, StagePoint, TrendPoint } from "../repository";
 
 async function tick<T>(value: T): Promise<T> {
@@ -73,7 +81,7 @@ export class MemoryRepository implements Repository {
   }
 
   async dashboardKpis(): Promise<DashboardKpis> {
-    return tick({ ...mock.DASHBOARD_KPIS });
+    return tick(mock.computeDashboardKpis());
   }
   async recoveryTrend(): Promise<TrendPoint[]> {
     return tick([...mock.RECOVERY_TREND]);
@@ -149,5 +157,97 @@ export class MemoryRepository implements Repository {
     });
 
     return tick({ payment, updatedCase });
+  }
+
+  async sendInitialReminder(caseId: string) {
+    const kase = mock.getCase(caseId);
+    if (!kase) throw new Error(`sendInitialReminder: case ${caseId} not found`);
+    if (kase.status !== "active") {
+      throw new Error(
+        `sendInitialReminder: case ${caseId} is "${kase.status}", not "active" -- nothing to send`,
+      );
+    }
+    const debtor = mock.getDebtor(kase.debtorId);
+    const org = mock.getOrg(kase.organisationId);
+    const invoice = mock.listInvoicesForCase(caseId)[0];
+
+    const body = buildReminderMessage({
+      legalEntityName: org?.legalEntityName ?? "our client",
+      debtorName: debtor?.name ?? "—",
+      invoiceNumber: invoice?.invoiceNumber ?? null,
+      amountPaise: kase.principalOutstanding,
+    });
+
+    const idempotencyKey = `reminder-initial:${caseId}:${new Date().toISOString().slice(0, 10)}`;
+    const adapters = getAdapters();
+    const sendOutcome = await runAdapter(
+      (key) =>
+        adapters.whatsapp.send({
+          idempotencyKey: key,
+          caseId,
+          channel: "whatsapp",
+          to: debtor?.mobile ?? "unknown",
+          templateKey: "reminder_initial_v3",
+          templateVersion: 3,
+          body,
+        }),
+      idempotencyKey,
+    );
+
+    const communication = mock.insertCommunication({
+      id: `com-${nanoid(8)}`,
+      caseId,
+      organisationId: kase.organisationId,
+      channel: "whatsapp",
+      direction: "outbound",
+      templateKey: "reminder_initial_v3",
+      templateVersion: 3,
+      subject: null,
+      body,
+      providerMessageId: sendOutcome.result.providerRef,
+      threadRef: `thread-${caseId}`,
+      deliveryStatus: sendOutcome.result.outcome === "success" ? "sent" : "failed",
+      hasSecureLink: false,
+      replyClassification: null,
+      reviewedById: null,
+      createdAt: new Date().toISOString(),
+      deliveredAt: null,
+    } satisfies Communication);
+
+    if (sendOutcome.result.outcome !== "success") {
+      const sentPatch = applyReminderSent(kase);
+      const failed = applyReminderDeliveryFailed(sentPatch.updatedCase, true);
+      const updatedCase = mock.mutateCase(caseId, failed.updatedCase);
+      mock.appendAudit({
+        action: "reminder.delivery_failed",
+        entity: "recovery_case",
+        entityId: caseId,
+        reason: `${sendOutcome.urgentTask?.reason ?? sendOutcome.result.errorCode ?? "adapter failure"} -- ${failed.note}`,
+      });
+      return tick({ case: updatedCase, communication });
+    }
+
+    const sent = applyReminderSent(kase);
+    mock.mutateCase(caseId, sent.updatedCase);
+
+    // Demo simplification: the mock adapter has no real delivery webhook, so
+    // delivery is simulated immediately rather than waiting for one. A live
+    // adapter's parseWebhook() result would drive this transition instead.
+    const deliveredAt = new Date();
+    const delivered = applyReminderDelivered(sent.updatedCase, deliveredAt);
+    const updatedCase = mock.mutateCase(caseId, delivered.updatedCase);
+    const deliveredCommunication = mock.mutateCommunication(communication.id, {
+      deliveryStatus: "delivered",
+      deliveredAt: deliveredAt.toISOString(),
+    });
+
+    mock.appendAudit({
+      action: "reminder.sent",
+      entity: "recovery_case",
+      entityId: caseId,
+      reason: `${sent.note}; ${delivered.note}`,
+    });
+
+    return tick({ case: updatedCase, communication: deliveredCommunication });
   }
 }

@@ -26,6 +26,7 @@ import { StatusPill, WaitingOnPill } from "@/components/ui/status-pill";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LinkButton } from "@/components/ui/link-button";
+import { SendReminderButton } from "./send-reminder-button";
 
 export interface CaseDetailVM {
   kase: RecoveryCase;
@@ -95,6 +96,7 @@ export function CaseDetail({ vm }: { vm: CaseDetailVM }) {
               </span>
             </div>
           ) : null}
+          {kase.status === "active" ? <SendReminderButton caseId={kase.id} /> : null}
         </div>
 
         <Tabs defaultValue="timeline">

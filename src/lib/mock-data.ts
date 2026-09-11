@@ -326,6 +326,27 @@ export const CASES: RecoveryCase[] = [
     activatedAt: iso(-70),
     closedAt: iso(-9),
   },
+  {
+    id: "case-10",
+    organisationId: "org-2",
+    debtorId: "deb-4",
+    status: "active",
+    automationMode: "assist",
+    waitingOn: "system",
+    automationStartedAt: iso(-1),
+    currentStep: "Certification + validation + age gate cleared",
+    blocker: null,
+    nextScheduledAction: "Send initial reminder at next 11:00 IST window",
+    nextScheduledAt: iso(0, 5),
+    eligibilityRoute: null,
+    principalOutstanding: 55_00_000,
+    recoveredToDate: 0,
+    assigneeId: "user-2",
+    groupKey: null,
+    createdAt: iso(-3),
+    activatedAt: iso(-1),
+    closedAt: null,
+  },
 ];
 
 /* -------------------------------------------------------------- invoices -- */
@@ -378,6 +399,22 @@ export const INVOICES: Invoice[] = [
     outstandingBalance: 271_00_000,
     sourceDocumentId: "doc-3",
     extractionConfidence: 0.92,
+  },
+  {
+    id: "inv-4",
+    caseId: "case-10",
+    organisationId: "org-2",
+    debtorId: "deb-4",
+    invoiceNumber: "VTX/2026/1305",
+    invoiceDate: date(-65),
+    dueDate: date(-35),
+    taxableValue: 46_61_017,
+    taxRate: 18,
+    taxAmount: 8_38_983,
+    invoiceTotal: 55_00_000,
+    outstandingBalance: 55_00_000,
+    sourceDocumentId: "doc-4",
+    extractionConfidence: 0.95,
   },
 ];
 
@@ -797,15 +834,22 @@ export function urgentQueue(orgId?: string): QueueItem[] {
 
 /* ------------------------------------------------------------ aggregates -- */
 
-export const DASHBOARD_KPIS = {
-  openCases: CASES.filter((c) => !["recovered", "closed", "withdrawn", "archived"].includes(c.status))
-    .length,
-  amountUnderRecovery: CASES.reduce((s, c) => s + c.principalOutstanding, 0),
-  recoveredThisMonth: PAYMENTS.filter((p) => p.clientConfirmed).reduce((s, p) => s + p.amount, 0),
-  urgentTasks: TASKS.filter((t) => !t.resolvedAt && t.urgent).length,
-  awaitingClient: TASKS.filter((t) => !t.resolvedAt && t.waitingOn === "client").length,
-  portalRuns: TASKS.filter((t) => !t.resolvedAt && t.waitingOn === "portal").length,
-};
+/** Recomputed on each call so mutations (payments, reminders, ...) show up
+ * immediately -- unlike a frozen-at-import-time constant would. */
+export function computeDashboardKpis() {
+  return {
+    openCases: CASES.filter((c) => !["recovered", "closed", "withdrawn", "archived"].includes(c.status))
+      .length,
+    amountUnderRecovery: CASES.reduce((s, c) => s + c.principalOutstanding, 0),
+    recoveredThisMonth: PAYMENTS.filter((p) => p.clientConfirmed).reduce((s, p) => s + p.amount, 0),
+    urgentTasks: TASKS.filter((t) => !t.resolvedAt && t.urgent).length,
+    awaitingClient: TASKS.filter((t) => !t.resolvedAt && t.waitingOn === "client").length,
+    portalRuns: TASKS.filter((t) => !t.resolvedAt && t.waitingOn === "portal").length,
+  };
+}
+/** @deprecated snapshot at import time -- prefer computeDashboardKpis(). Kept
+ * for callers that intentionally want the fixed demo baseline. */
+export const DASHBOARD_KPIS = computeDashboardKpis();
 
 /** 30-day recovery trend, integer paise per day (cumulative-ish demo curve). */
 export const RECOVERY_TREND: Array<{ date: string; recovered: number; newDebt: number }> =
@@ -963,4 +1007,16 @@ export function markPaymentConfirmed(id: string) {
 export function insertPayment(payment: PaymentRecord) {
   PAYMENTS.unshift(payment);
   return payment;
+}
+
+export function insertCommunication(c: Communication) {
+  COMMUNICATIONS.unshift(c);
+  return c;
+}
+
+export function mutateCommunication(id: string, patch: Partial<Communication>) {
+  const idx = COMMUNICATIONS.findIndex((c) => c.id === id);
+  if (idx === -1) throw new Error(`mutateCommunication: communication ${id} not found`);
+  COMMUNICATIONS[idx] = { ...COMMUNICATIONS[idx], ...patch };
+  return COMMUNICATIONS[idx];
 }

@@ -101,4 +101,13 @@ export interface Repository {
   }): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase | null }>;
   /** Client confirms an already-recorded receipt. Cancels pending escalation. */
   confirmPayment(paymentId: string): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase }>;
+
+  /**
+   * Send the initial reminder for a case in `active` status (PRD §5/§8):
+   * builds the message, runs it through the messaging adapter under the
+   * retry-once-then-urgent-task policy, records the communication, and
+   * advances the case (sent -> delivered -> 24h timer started, or a
+   * both-channels-failed contact-correction task on adapter failure).
+   */
+  sendInitialReminder(caseId: string): Promise<{ case: RecoveryCase; communication: Communication }>;
 }

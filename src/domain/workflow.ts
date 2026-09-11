@@ -523,6 +523,50 @@ function partialPayment(state: WorkflowState): Transition {
   };
 }
 
+/**
+ * Shared DTO <-> pure-state bridge, reused by every module that drives a
+ * `RecoveryCase` through `advance()` (src/domain/apply-payment.ts,
+ * src/domain/reminder.ts, ...). Kept here so there is exactly one mapping to
+ * keep in sync with the RecoveryCase shape.
+ */
+export function caseToWorkflowState(c: {
+  status: CaseStatus;
+  waitingOn: WaitingOn;
+  blocker: string | null;
+  nextScheduledAction: string | null;
+  eligibilityRoute: import("@/contract/enums").EligibilityRoute | null;
+  principalOutstanding: number;
+  recoveredToDate: number;
+}): WorkflowState {
+  return {
+    status: c.status,
+    waitingOn: c.waitingOn,
+    blocker: c.blocker,
+    nextAction: c.nextScheduledAction,
+    eligibilityRoute: c.eligibilityRoute,
+    // A case already past intake has cleared the activation gates; none of
+    // the events driven through this bridge re-check them.
+    clientCertified: true,
+    staffValidated: true,
+    ageGatePassed: true,
+    principalOutstanding: c.principalOutstanding,
+    recoveredToDate: c.recoveredToDate,
+  };
+}
+
+/** Apply a `Transition`'s next-state fields onto a `RecoveryCase`-shaped patch. */
+export function transitionToCasePatch(next: WorkflowState) {
+  return {
+    status: next.status,
+    waitingOn: next.waitingOn,
+    blocker: next.blocker,
+    nextScheduledAction: next.nextAction,
+    eligibilityRoute: next.eligibilityRoute,
+    principalOutstanding: next.principalOutstanding,
+    recoveredToDate: next.recoveredToDate,
+  };
+}
+
 export function initialState(principalOutstanding: number): WorkflowState {
   return {
     status: "received",

@@ -464,4 +464,15 @@ export class SupabaseRepository implements Repository {
     // INSERT an audit_events row. Same shape as MemoryRepository.confirmPayment.
     throw new Error("SupabaseRepository.confirmPayment: not wired yet -- see src/domain/apply-payment.ts");
   }
+
+  async sendInitialReminder(
+    _caseId: string,
+  ): Promise<{ case: RecoveryCase; communication: Communication }> {
+    // TODO(api): SELECT case/debtor/org/invoice, call the real messaging
+    // adapter through src/orchestrator/run-adapter.ts, INSERT the
+    // communications row, UPDATE the case via src/domain/reminder.ts, and
+    // persist the webhook-driven delivery transition instead of simulating
+    // it immediately (see the comment in MemoryRepository.sendInitialReminder).
+    throw new Error("SupabaseRepository.sendInitialReminder: not wired yet -- see src/domain/reminder.ts");
+  }
 }
