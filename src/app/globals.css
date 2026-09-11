@@ -1,26 +1,110 @@
 @import "tailwindcss";
 
+/*
+ * Debtrecover design tokens.
+ * Aesthetic reference: Linear / Stripe dashboard — restrained, high-contrast,
+ * dense but calm. Status is always conveyed by text + shape, never colour alone
+ * (PRD §9 WCAG 2.1 AA).
+ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fbfbfc;
+  --foreground: #1c1d21;
+  --card: #ffffff;
+  --card-foreground: #1c1d21;
+  --muted: #f2f3f5;
+  --muted-foreground: #62636c;
+  --border: #e6e7eb;
+  --input: #e6e7eb;
+  --ring: #5b5bd6;
+
+  --primary: #5b5bd6;
+  --primary-foreground: #ffffff;
+  --accent: #ececfb;
+  --accent-foreground: #3a3aa8;
+
+  /* semantic status */
+  --success: #1a7f52;
+  --success-bg: #e7f5ee;
+  --warning: #9a6700;
+  --warning-bg: #fdf3d9;
+  --danger: #c0384b;
+  --danger-bg: #fbe9ec;
+  --info: #2a5b9e;
+  --info-bg: #e8f0fb;
+
+  --radius: 0.625rem;
+}
+
+:root[data-theme="dark"],
+:root.dark {
+  --background: #0c0c0f;
+  --foreground: #ededf0;
+  --card: #151518;
+  --card-foreground: #ededf0;
+  --muted: #1d1d22;
+  --muted-foreground: #9a9aa5;
+  --border: #26262c;
+  --input: #26262c;
+  --ring: #7c7cf0;
+
+  --primary: #7c7cf0;
+  --primary-foreground: #0c0c0f;
+  --accent: #22223a;
+  --accent-foreground: #c7c7f5;
+
+  --success: #3ecf8e;
+  --success-bg: #10241c;
+  --warning: #e5b95b;
+  --warning-bg: #2a2210;
+  --danger: #f2647c;
+  --danger-bg: #2c1418;
+  --info: #7db3f0;
+  --info-bg: #10203a;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: var(--border);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
