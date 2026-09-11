@@ -1,0 +1,2 @@
+client_code,legal_entity_name,creditor_gstin,debtor_name,debtor_gstin,debtor_mobile,debtor_email,invoice_number,invoice_date,due_date,taxable_value,tax_rate,tax_amount,invoice_total,adjustments,total_due,ledger_as_of,client_certified,group_key,notes
+SAMPLE,Example Legal Entity,27AAAAA0000A1Z5,Example Debtor,27BBBBB0000B1Z6,919999999999,debtor@example.com,INV-0001,2026-01-15,2026-02-14,100000,18,18000,118000,0,118000,2026-08-29,YES,DEBTOR-001,Replace sample values
