@@ -16,9 +16,9 @@ tasks share no files; shared-contract edits are serialized.
 
 ## Phase 1 — Design
 
-- [ ] 1.1 Lock theme + tokens; primitive inventory (button/card/badge/table/tabs/sheet/dialog/status-pill/empty-state)
-- [ ] 1.2 Key-screen layouts: dashboard, debtor/case list, case detail, reminder composer, GST view, MSME wizard, payment receipt
-- [ ] 1.3 App shell + navigation (internal 9-item, client 5-item), responsive 320/768/1024/1440
+- [x] 1.1 Primitive inventory locked (button/card/badge/table/tabs/sheet/dialog/status-pill/empty-state) + new shared primitives (PageHeader eyebrow/hero, SpotlightCard, ChipFilterRow) added while revamping against the owner-approved wireframes at `C:\Users\lovel\.traycer\epics\2db606ba-873f-4fe0-8c3d-769517a768c0\artifacts\ui-ux-approval-gate`
+- [x] 1.2 Key-screen layouts revamped against the wireframes: Today, Cases, Case detail, Client overview, Communications, GST, MSME. Payments/Intake still on the older layout (functional, header-only polish applied).
+- [x] 1.3 App shell + navigation: nav badge counts wired to live data; relabeled `/gst`↔`/msme` (were mislabeled "Portal runs"/"DD-Hearings" regardless of content). Responsive 320/768/1024/1440 not formally re-verified after the revamp.
 
 ## Phase 2 — Build (parallel where marked ∥)
 
@@ -34,7 +34,8 @@ tasks share no files; shared-contract edits are serialized.
 - [x] 2.7 **M6 GST**: compose form with live field-limit counters, pack prepare, assisted-session + human-confirm + capture, drift → urgent task (drift path unit-tested via run-adapter.test.ts; happy path live-tested end-to-end). Tests: scenarios 8,9 `[gate]`
 - [x] 2.8 **M7 MSME**: seven-stage wizard, save/resume, immutable preview snapshot. Test: scenario 10 `[gate]` — live-tested end-to-end including a workflow.ts bug fix found via live testing (stale blocker/waiting-on on the filed transition)
 - [x] 2.9 **M8 DD/Hearings**: DD task + hearing → calendar event, live-tested end-to-end; closed a gap where `msefc_dd` was unreachable in the state machine. Test: scenario 11 `[gate]` — DD evidence *upload* (image storage) still open, see 2.10
-- [ ] 2.10 **M10 Security**: audit-event helper + hash chain on every mutation, secure expiring links, backup/restore runbook. Test: scenario 13 `[gate]`
+- [x] 2.10a **M10 Security — audit log + kill switch**: real Audit page (`/audit`) reading the append-only log every mutation this session writes to; global automation kill switch (`/clients`) with required-reason enforcement, live-tested. `[gate]`
+- [ ] 2.10b **M10 Security — remaining**: hash-chaining audit entries (fields exist, not yet chained), secure expiring document links, backup/restore runbook, per-client automation-mode editing. Test: scenario 13
 
 ## Phase 3 — Ship
 
