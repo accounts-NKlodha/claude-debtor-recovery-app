@@ -110,4 +110,21 @@ export interface Repository {
    * both-channels-failed contact-correction task on adapter failure).
    */
   sendInitialReminder(caseId: string): Promise<{ case: RecoveryCase; communication: Communication }>;
+
+  /**
+   * GST assisted-notification flow (PRD §11). Government-portal actions cap
+   * at "assist": the platform prepares/validates/prefills, a human completes
+   * CAPTCHA and Send, and the platform captures reference/screenshot evidence.
+   */
+  prepareGstNotification(
+    caseId: string,
+    input: import("@/contract/schemas").GstComposeInput,
+  ): Promise<{ case: RecoveryCase; manifestHash: string | null }>;
+  /** Opens the controlled browser session; always human_action_required -- no CAPTCHA/OTP bypass. */
+  openGstAssistedSession(caseId: string): Promise<{ sessionUrl: string | null }>;
+  /** Called after the operator confirms Send. Fails closed on drift (scenario 9). */
+  captureGstFiling(
+    caseId: string,
+    staffReference: string,
+  ): Promise<{ case: RecoveryCase; referenceNumber: string | null }>;
 }

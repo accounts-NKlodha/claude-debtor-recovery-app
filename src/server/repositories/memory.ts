@@ -15,8 +15,10 @@ import {
   applyReminderSent,
   buildReminderMessage,
 } from "@/domain/reminder";
+import { applyGstAutomationFailed, applyGstFiled, applyGstPrepared } from "@/domain/gst";
 import { runAdapter } from "@/orchestrator/run-adapter";
 import { getAdapters } from "@/adapters";
+import { gstComposeSchema, type GstComposeInput } from "@/contract/schemas";
 import type { Communication, PaymentRecord } from "@/contract/types";
 import type { AgeingBucket, DashboardKpis, Repository, StagePoint, TrendPoint } from "../repository";
 
@@ -249,5 +251,122 @@ export class MemoryRepository implements Repository {
     });
 
     return tick({ case: updatedCase, communication: deliveredCommunication });
+  }
+
+  async prepareGstNotification(caseId: string, input: GstComposeInput) {
+    const kase = mock.getCase(caseId);
+    if (!kase) throw new Error(`prepareGstNotification: case ${caseId} not found`);
+    const parsed = gstComposeSchema.safeParse(input);
+    if (!parsed.success) {
+      throw new Error(parsed.error.issues[0]?.message ?? "Invalid GST compose input");
+    }
+
+    const idempotencyKey = `gst-prepare:${caseId}`;
+    const outcome = await runAdapter(
+      (key) => getAdapters().gstPortal.prepare({ idempotencyKey: key, caseId, ...parsed.data }),
+      idempotencyKey,
+    );
+
+    if (outcome.result.outcome !== "success") {
+      const failed = applyGstAutomationFailed(
+        kase,
+        outcome.urgentTask?.reason ?? outcome.result.errorCode ?? "GST prepare failed",
+      );
+      const updatedCase = mock.mutateCase(caseId, failed.updatedCase);
+      mock.appendAudit({
+        action: "gst.prepare_failed",
+        entity: "recovery_case",
+        entityId: caseId,
+        reason: failed.note,
+      });
+      return tick({ case: updatedCase, manifestHash: null });
+    }
+
+    // Idempotent: only transitions when still at the eligibility-review gate.
+    const prepared = kase.status === "gst_eligibility_review" ? applyGstPrepared(kase) : null;
+    const updatedCase = prepared ? mock.mutateCase(caseId, prepared.updatedCase) : kase;
+    mock.appendAudit({
+      action: "gst.prepared",
+      entity: "recovery_case",
+      entityId: caseId,
+      reason: prepared?.note ?? "GST pack re-validated (already prepared)",
+    });
+
+    return tick({ case: updatedCase, manifestHash: outcome.result.data?.manifestHash ?? null });
+  }
+
+  async openGstAssistedSession(caseId: string) {
+    const idempotencyKey = `gst-session:${caseId}`;
+    const outcome = await runAdapter((key) => getAdapters().gstPortal.openAssistedSession(key), idempotencyKey);
+    mock.appendAudit({
+      action: "gst.session_opened",
+      entity: "recovery_case",
+      entityId: caseId,
+      reason: outcome.result.nextAction ?? "Assisted GST portal session opened",
+    });
+    return tick({ sessionUrl: outcome.result.data?.sessionUrl ?? null });
+  }
+
+  async captureGstFiling(caseId: string, staffReference: string) {
+    const kase = mock.getCase(caseId);
+    if (!kase) throw new Error(`captureGstFiling: case ${caseId} not found`);
+
+    const idempotencyKey = `gst-capture:${caseId}`;
+    const outcome = await runAdapter((key) => getAdapters().gstPortal.captureResult(key), idempotencyKey);
+
+    if (outcome.result.outcome === "drift_detected" || outcome.result.outcome === "permanent_failure") {
+      const failed = applyGstAutomationFailed(
+        kase,
+        outcome.urgentTask?.reason ?? outcome.result.errorCode ?? "GST filing capture failed",
+      );
+      const updatedCase = mock.mutateCase(caseId, failed.updatedCase);
+      mock.appendAudit({
+        action: "gst.filing_failed",
+        entity: "recovery_case",
+        entityId: caseId,
+        reason: failed.note,
+      });
+      return tick({ case: updatedCase, referenceNumber: null });
+    }
+
+    if (outcome.result.outcome !== "success") {
+      // human_action_required / retryable mid-flight -- no state change yet.
+      return tick({ case: kase, referenceNumber: null });
+    }
+
+    const referenceNumber = staffReference || outcome.result.data?.referenceNumber || "UNSPECIFIED";
+    const filedAt = new Date();
+    const filed = applyGstFiled(kase, filedAt);
+    const updatedCase = mock.mutateCase(caseId, filed.updatedCase);
+
+    const debtor = mock.getDebtor(kase.debtorId);
+    mock.insertCommunication({
+      id: `com-${nanoid(8)}`,
+      caseId,
+      organisationId: kase.organisationId,
+      channel: "email",
+      direction: "outbound",
+      templateKey: "gst_notification_v2",
+      templateVersion: 2,
+      subject: `GST communication filed — ${debtor?.name ?? "debtor"}`,
+      body: `A taxpayer communication has been filed on the GST portal. Reference: ${referenceNumber}.`,
+      providerMessageId: null,
+      threadRef: `thread-${caseId}`,
+      deliveryStatus: "delivered",
+      hasSecureLink: false,
+      replyClassification: null,
+      reviewedById: null,
+      createdAt: filedAt.toISOString(),
+      deliveredAt: filedAt.toISOString(),
+    } satisfies Communication);
+
+    mock.appendAudit({
+      action: "gst.filed",
+      entity: "recovery_case",
+      entityId: caseId,
+      reason: `${filed.note}; reference ${referenceNumber}`,
+    });
+
+    return tick({ case: updatedCase, referenceNumber });
   }
 }

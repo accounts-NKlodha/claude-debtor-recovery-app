@@ -1,8 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { ShieldCheck, Lock, Camera, CircleCheck, TriangleAlert, Paperclip } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ShieldCheck, Lock, Camera, CircleCheck, TriangleAlert, Paperclip, CircleAlert } from "lucide-react";
 import { gstComposeSchema } from "@/contract/schemas";
+import {
+  captureGstFilingAction,
+  openGstAssistedSessionAction,
+  prepareGstNotificationAction,
+} from "@/app/actions/gst";
 import { formatInr } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -35,6 +41,7 @@ function Counter({ n, max }: { n: number; max: number }) {
 }
 
 export function GstScreen({ pack }: { pack: GstPack }) {
+  const router = useRouter();
   const [subject, setSubject] = React.useState(
     `Payment not received - ${pack.debtorName}`.slice(0, SUBJECT_MAX),
   );
@@ -46,8 +53,10 @@ export function GstScreen({ pack }: { pack: GstPack }) {
     "invoice-bundle.pdf",
   ]);
   const [records, setRecords] = React.useState(Math.min(pack.invoiceCount, RECORDS_MAX));
-  const [session, setSession] = React.useState<"idle" | "open" | "sent">("idle");
+  const [session, setSession] = React.useState<"idle" | "opening" | "open" | "sent" | "filing">("idle");
+  const [sessionUrl, setSessionUrl] = React.useState<string | null>(null);
   const [ref, setRef] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
 
   const parsed = gstComposeSchema.safeParse({
     recipientGstin: pack.recipientGstin,
@@ -58,6 +67,41 @@ export function GstScreen({ pack }: { pack: GstPack }) {
     attachmentStorageKeys: attachments,
   });
   const valid = parsed.success;
+
+  const openSession = () => {
+    if (!parsed.success) return;
+    setError(null);
+    setSession("opening");
+    prepareGstNotificationAction(pack.caseId, parsed.data)
+      .then(() => openGstAssistedSessionAction(pack.caseId))
+      .then((res) => {
+        setSessionUrl(res.sessionUrl);
+        setSession("open");
+      })
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : "Failed to open the assisted session");
+        setSession("idle");
+      });
+  };
+
+  const recordFiling = () => {
+    setError(null);
+    setSession("filing");
+    captureGstFilingAction(pack.caseId, ref)
+      .then((res) => {
+        if (!res.referenceNumber) {
+          setError("Filing capture did not return a reference -- check Audit / Security for the failure reason.");
+          setSession("open");
+          return;
+        }
+        setSession("sent");
+        router.refresh();
+      })
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : "Failed to capture the filing");
+        setSession("open");
+      });
+  };
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
@@ -168,8 +212,11 @@ export function GstScreen({ pack }: { pack: GstPack }) {
           </CardHeader>
           <CardContent className="flex flex-col gap-3 pt-0">
             <div className="flex flex-wrap items-center gap-2">
-              <Button disabled={!valid || session !== "idle"} onClick={() => setSession("open")}>
-                Open assisted portal session
+              <Button
+                disabled={!valid || session !== "idle"}
+                onClick={openSession}
+              >
+                {session === "opening" ? "Preparing…" : "Open assisted portal session"}
               </Button>
               <Button
                 variant="outline"
@@ -179,18 +226,38 @@ export function GstScreen({ pack }: { pack: GstPack }) {
                 I have completed CAPTCHA &amp; Send
               </Button>
               <Badge
-                tone={session === "sent" ? "success" : session === "open" ? "warning" : "neutral"}
-                icon={session === "sent" ? <CircleCheck /> : undefined}
+                tone={
+                  session === "sent" || session === "filing"
+                    ? "success"
+                    : session === "open" || session === "opening"
+                      ? "warning"
+                      : "neutral"
+                }
+                icon={session === "sent" || session === "filing" ? <CircleCheck /> : undefined}
               >
                 {session === "idle"
                   ? "Not started"
-                  : session === "open"
-                    ? "Session open — human action required"
-                    : "Submitted by staff"}
+                  : session === "opening"
+                    ? "Preparing pack…"
+                    : session === "open"
+                      ? "Session open — human action required"
+                      : "Submitted by staff"}
               </Badge>
             </div>
 
-            {session === "sent" ? (
+            {sessionUrl ? (
+              <p className="text-xs text-muted-foreground">
+                Session: <span className="font-mono">{sessionUrl}</span>
+              </p>
+            ) : null}
+
+            {error ? (
+              <p className="flex items-center gap-1.5 text-xs text-danger" role="alert">
+                <CircleAlert className="h-3.5 w-3.5" /> {error}
+              </p>
+            ) : null}
+
+            {session === "sent" || session === "filing" ? (
               <div className="flex flex-col gap-2">
                 <Label htmlFor="gst-ref">Portal reference number</Label>
                 <Input
@@ -198,12 +265,15 @@ export function GstScreen({ pack }: { pack: GstPack }) {
                   placeholder="e.g. AD0809260001234"
                   value={ref}
                   onChange={(e) => setRef(e.target.value)}
+                  disabled={session === "filing"}
                 />
                 <div className="flex items-center gap-2 rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
                   <Camera className="h-4 w-4" />
                   Confirmation screenshot captured from the session and registered as evidence.
                 </div>
-                <Button disabled={!ref}>Record filing &amp; start 7-day timer</Button>
+                <Button disabled={!ref || session === "filing"} onClick={recordFiling}>
+                  {session === "filing" ? "Recording…" : "Record filing & start 7-day timer"}
+                </Button>
               </div>
             ) : null}
           </CardContent>

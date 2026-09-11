@@ -475,4 +475,30 @@ export class SupabaseRepository implements Repository {
     // it immediately (see the comment in MemoryRepository.sendInitialReminder).
     throw new Error("SupabaseRepository.sendInitialReminder: not wired yet -- see src/domain/reminder.ts");
   }
+
+  async prepareGstNotification(
+    _caseId: string,
+    _input: import("@/contract/schemas").GstComposeInput,
+  ): Promise<{ case: RecoveryCase; manifestHash: string | null }> {
+    // TODO(api): validate + call the real GST adapter's prepare() through
+    // run-adapter.ts, UPDATE the case via src/domain/gst.ts applyGstPrepared(),
+    // INSERT an audit_events row. Same shape as MemoryRepository.
+    throw new Error("SupabaseRepository.prepareGstNotification: not wired yet -- see src/domain/gst.ts");
+  }
+
+  async openGstAssistedSession(_caseId: string): Promise<{ sessionUrl: string | null }> {
+    // TODO(api): call the real GST adapter's openAssistedSession(), audit it.
+    throw new Error("SupabaseRepository.openGstAssistedSession: not wired yet -- see src/domain/gst.ts");
+  }
+
+  async captureGstFiling(
+    _caseId: string,
+    _staffReference: string,
+  ): Promise<{ case: RecoveryCase; referenceNumber: string | null }> {
+    // TODO(api): call captureResult() through run-adapter.ts; on success
+    // apply src/domain/gst.ts applyGstFiled() and INSERT the communications
+    // row; on drift/permanent failure apply applyGstAutomationFailed() and
+    // raise an urgent audit_events row (fail closed -- PRD §11, scenario 9).
+    throw new Error("SupabaseRepository.captureGstFiling: not wired yet -- see src/domain/gst.ts");
+  }
 }
