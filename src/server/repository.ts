@@ -85,4 +85,20 @@ export interface Repository {
 
   // -- intake -------------------------------------------------------------
   bulkImport(fileName: string): Promise<ImportResult>;
+
+  // -- mutations ------------------------------------------------------------
+  /**
+   * Record a receipt against a case. If `clientConfirmed` is true this also
+   * runs the allocation + workflow rule (PRD §7): confirming immediately
+   * cancels pending escalation, in full or in part.
+   */
+  recordPayment(input: {
+    caseId: string;
+    kind: PaymentRecord["kind"];
+    amount: number;
+    reference: string | null;
+    clientConfirmed: boolean;
+  }): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase | null }>;
+  /** Client confirms an already-recorded receipt. Cancels pending escalation. */
+  confirmPayment(paymentId: string): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase }>;
 }

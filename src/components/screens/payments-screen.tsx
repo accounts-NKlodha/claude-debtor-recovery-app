@@ -1,10 +1,12 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { CircleCheck, TriangleAlert } from "lucide-react";
 import type { PaymentRecord } from "@/contract/types";
 import { PAYMENT_KIND } from "@/contract/enums";
 import { moneyToPaise } from "@/contract/schemas";
+import { recordPaymentAction, confirmPaymentAction } from "@/app/actions/payments";
 import { formatInr } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,15 +28,37 @@ export interface PaymentRow extends PaymentRecord {
 }
 
 export function PaymentsScreen({ rows: initial }: { rows: PaymentRow[] }) {
-  const [rows, setRows] = React.useState(initial);
+  const router = useRouter();
+  // `initial` is the server-fetched source of truth; router.refresh() after a
+  // mutation re-runs the page and gives us fresh props. `optimisticConfirmed`
+  // only smooths the gap between click and that refresh landing.
+  const [optimisticConfirmed, setOptimisticConfirmed] = React.useState<Set<string>>(new Set());
+  const rows = initial.map((r) =>
+    optimisticConfirmed.has(r.id) ? { ...r, clientConfirmed: true } : r,
+  );
   const [amount, setAmount] = React.useState("");
   const [kind, setKind] = React.useState<PaymentRecord["kind"]>("bank");
   const [reference, setReference] = React.useState("");
   const [confirmNow, setConfirmNow] = React.useState(false);
   const [amountError, setAmountError] = React.useState<string | null>(null);
+  const [pendingId, setPendingId] = React.useState<string | null>(null);
 
-  const confirm = (id: string) =>
-    setRows((r) => r.map((x) => (x.id === id ? { ...x, clientConfirmed: true } : x)));
+  const confirm = (row: PaymentRow) => {
+    setPendingId(row.id);
+    setOptimisticConfirmed((s) => new Set(s).add(row.id));
+    confirmPaymentAction(row.id, row.caseId)
+      .catch(() =>
+        setOptimisticConfirmed((s) => {
+          const next = new Set(s);
+          next.delete(row.id);
+          return next;
+        }),
+      )
+      .finally(() => {
+        setPendingId(null);
+        router.refresh();
+      });
+  };
 
   const add = (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,22 +68,12 @@ export function PaymentsScreen({ rows: initial }: { rows: PaymentRow[] }) {
       return;
     }
     setAmountError(null);
-    setRows((r) => [
-      {
-        id: `pay-new-${r.length + 1}`,
-        caseId: "case-1",
-        organisationId: "org-1",
-        kind,
-        amount: parsed.data,
-        receivedOn: new Date().toISOString().slice(0, 10),
-        reference: reference || null,
-        clientConfirmed: confirmNow,
-        createdAt: new Date().toISOString(),
-        debtorName: "New receipt",
-        clientName: "—",
-      },
-      ...r,
-    ]);
+    const caseId = rows[0]?.caseId ?? "case-1";
+    recordPaymentAction({ caseId, kind, amount: parsed.data, reference: reference || null, clientConfirmed: confirmNow })
+      .then(() => router.refresh())
+      .catch(() => {
+        /* surfaced via router.refresh() reverting to last persisted state */
+      });
     setAmount("");
     setReference("");
     setConfirmNow(false);
@@ -162,8 +176,13 @@ export function PaymentsScreen({ rows: initial }: { rows: PaymentRow[] }) {
                       Confirmed
                     </Badge>
                   ) : (
-                    <Button size="sm" variant="outline" onClick={() => confirm(p.id)}>
-                      Confirm &amp; stop escalation
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={pendingId === p.id}
+                      onClick={() => confirm(p)}
+                    >
+                      {pendingId === p.id ? "Confirming…" : "Confirm & stop escalation"}
                     </Button>
                   )}
                 </TableCell>

@@ -433,13 +433,35 @@ export class SupabaseRepository implements Repository {
     };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- signature kept for interface parity
-  async bulkImport(fileName: string): Promise<ImportResult> {
+  async bulkImport(_fileName: string): Promise<ImportResult> {
     // TODO(api): wire to src/domain/bulk-import.ts validateImport() once
     // uploaded files are received server-side (Storage + a route handler).
     throw new Error(
       "SupabaseRepository.bulkImport: not wired yet -- validateImport() from src/domain/bulk-import.ts " +
         "is the pure validator; a route handler needs to read the uploaded file and call it.",
     );
+  }
+
+  async recordPayment(_input: {
+    caseId: string;
+    kind: PaymentRecordRow["kind"];
+    amount: number;
+    reference: string | null;
+    clientConfirmed: boolean;
+  }): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase | null }> {
+    // TODO(api): INSERT into payment_records, then call confirmPayment() below
+    // when clientConfirmed -- same rule, real transaction. The pure logic
+    // (src/domain/apply-payment.ts) is written and unit-tested; this only
+    // needs the INSERT/UPDATE wiring once a project exists.
+    throw new Error("SupabaseRepository.recordPayment: not wired yet -- see src/domain/apply-payment.ts");
+  }
+
+  async confirmPayment(
+    _paymentId: string,
+  ): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase }> {
+    // TODO(api): SELECT payment + case + invoices, run
+    // applyConfirmedPayment(), UPDATE case + invoices in one transaction,
+    // INSERT an audit_events row. Same shape as MemoryRepository.confirmPayment.
+    throw new Error("SupabaseRepository.confirmPayment: not wired yet -- see src/domain/apply-payment.ts");
   }
 }

@@ -903,3 +903,64 @@ export function stubBulkImport(fileName: string): ImportResult {
 }
 export const BULK_IMPORT_NOTE =
   "TODO(api): replace stubBulkImport with a server action returning ImportResult.";
+
+/* ------------------------------------------------------- mutations (demo) - */
+/**
+ * These mutate the module-level arrays above in place. That's enough to make
+ * the running dev/prod server behave statefully for a demo (Node keeps one
+ * module instance per process) -- it is NOT multi-instance-safe or durable,
+ * which is exactly why MemoryRepository is a named, swappable seam and not
+ * the "real" storage. See src/server/repositories/supabase.ts for the
+ * durable counterpart.
+ */
+
+export interface AuditEntry {
+  id: string;
+  action: string;
+  entity: string;
+  entityId: string;
+  reason: string | null;
+  createdAt: string;
+}
+const AUDIT_LOG_SEED: AuditEntry[] = [
+  {
+    id: "audit-1",
+    action: "case.activated",
+    entity: "recovery_case",
+    entityId: "case-1",
+    reason: "Certification + validation + age gate cleared",
+    createdAt: iso(-6),
+  },
+];
+let nextAuditSeq = AUDIT_LOG_SEED.length;
+export const AUDIT_LOG: AuditEntry[] = [...AUDIT_LOG_SEED];
+
+export function appendAudit(entry: Omit<AuditEntry, "id" | "createdAt">) {
+  nextAuditSeq += 1;
+  AUDIT_LOG.unshift({ ...entry, id: `audit-${nextAuditSeq}`, createdAt: new Date().toISOString() });
+}
+
+export function mutateCase(id: string, patch: Partial<RecoveryCase>) {
+  const idx = CASES.findIndex((c) => c.id === id);
+  if (idx === -1) throw new Error(`mutateCase: case ${id} not found`);
+  CASES[idx] = { ...CASES[idx], ...patch };
+  return CASES[idx];
+}
+
+export function mutateInvoice(id: string, patch: Partial<Invoice>) {
+  const idx = INVOICES.findIndex((i) => i.id === id);
+  if (idx === -1) return; // demo dataset doesn't carry every case's invoices
+  INVOICES[idx] = { ...INVOICES[idx], ...patch };
+}
+
+export function markPaymentConfirmed(id: string) {
+  const idx = PAYMENTS.findIndex((p) => p.id === id);
+  if (idx === -1) throw new Error(`markPaymentConfirmed: payment ${id} not found`);
+  PAYMENTS[idx] = { ...PAYMENTS[idx], clientConfirmed: true };
+  return PAYMENTS[idx];
+}
+
+export function insertPayment(payment: PaymentRecord) {
+  PAYMENTS.unshift(payment);
+  return payment;
+}

@@ -6,7 +6,10 @@
  * can't mutate shared demo state.
  */
 
+import { nanoid } from "nanoid";
 import * as mock from "@/lib/mock-data";
+import { applyConfirmedPayment } from "@/domain/apply-payment";
+import type { PaymentRecord } from "@/contract/types";
 import type { AgeingBucket, DashboardKpis, Repository, StagePoint, TrendPoint } from "../repository";
 
 async function tick<T>(value: T): Promise<T> {
@@ -87,5 +90,64 @@ export class MemoryRepository implements Repository {
 
   async bulkImport(fileName: string) {
     return tick(mock.stubBulkImport(fileName));
+  }
+
+  async recordPayment(input: {
+    caseId: string;
+    kind: PaymentRecord["kind"];
+    amount: number;
+    reference: string | null;
+    clientConfirmed: boolean;
+  }) {
+    const payment: PaymentRecord = {
+      id: `pay-${nanoid(8)}`,
+      caseId: input.caseId,
+      organisationId: mock.getCase(input.caseId)?.organisationId ?? "",
+      kind: input.kind,
+      amount: input.amount,
+      receivedOn: new Date().toISOString().slice(0, 10),
+      reference: input.reference,
+      clientConfirmed: false, // apply confirmation via the shared path below
+      createdAt: new Date().toISOString(),
+    };
+    mock.insertPayment(payment);
+    mock.appendAudit({
+      action: "payment.recorded",
+      entity: "payment_record",
+      entityId: payment.id,
+      reason: `${input.kind} receipt of ${input.amount} paise recorded for case ${input.caseId}`,
+    });
+
+    if (!input.clientConfirmed) return tick({ payment, updatedCase: null });
+
+    const { updatedCase } = await this.confirmPayment(payment.id);
+    const confirmed = mock.PAYMENTS.find((p) => p.id === payment.id)!;
+    return tick({ payment: confirmed, updatedCase });
+  }
+
+  async confirmPayment(paymentId: string) {
+    const payment = mock.markPaymentConfirmed(paymentId);
+    const kase = mock.getCase(payment.caseId);
+    if (!kase) throw new Error(`confirmPayment: case ${payment.caseId} not found`);
+
+    const invoices = mock.listInvoicesForCase(kase.id);
+    const result = applyConfirmedPayment(
+      kase,
+      invoices.map((i) => ({ id: i.id, invoiceDate: i.invoiceDate, outstandingBalance: i.outstandingBalance })),
+      payment.amount,
+    );
+
+    for (const alloc of result.invoiceAllocations) {
+      mock.mutateInvoice(alloc.invoiceId, { outstandingBalance: alloc.balanceAfter });
+    }
+    const updatedCase = mock.mutateCase(kase.id, result.updatedCase);
+    mock.appendAudit({
+      action: "payment.confirmed",
+      entity: "recovery_case",
+      entityId: kase.id,
+      reason: result.note,
+    });
+
+    return tick({ payment, updatedCase });
   }
 }
