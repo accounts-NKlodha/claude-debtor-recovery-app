@@ -171,4 +171,22 @@ export interface Repository {
     caseId: string,
     startsAtIso: string,
   ): Promise<{ case: RecoveryCase; eventId: string | null }>;
+
+  /**
+   * Staff reviews and corrects a low-confidence OCR extraction (PRD §7,
+   * acceptance scenario 1). Applies the corrected fields to the invoice
+   * (preserving provenance -- the original checksum/version is untouched,
+   * only the extracted values are corrected) and satisfies the
+   * staff-validation gate.
+   */
+  correctInvoiceOcr(
+    caseId: string,
+    invoiceId: string,
+    corrections: Partial<
+      Pick<
+        Invoice,
+        "invoiceNumber" | "invoiceDate" | "dueDate" | "taxableValue" | "taxRate" | "taxAmount" | "invoiceTotal" | "outstandingBalance"
+      >
+    >,
+  ): Promise<{ case: RecoveryCase; invoice: Invoice }>;
 }

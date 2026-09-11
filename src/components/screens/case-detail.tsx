@@ -28,6 +28,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { LinkButton } from "@/components/ui/link-button";
 import { SendReminderButton } from "./send-reminder-button";
 import { DdHearingActions } from "./dd-hearing-actions";
+import { OcrReviewPanel } from "./ocr-review-panel";
 
 export interface CaseDetailVM {
   kase: RecoveryCase;
@@ -100,6 +101,10 @@ export function CaseDetail({ vm }: { vm: CaseDetailVM }) {
           {kase.status === "active" ? <SendReminderButton caseId={kase.id} /> : null}
           <DdHearingActions caseId={kase.id} status={kase.status} />
         </div>
+
+        {kase.status === "correction_required" && vm.invoices[0] ? (
+          <OcrReviewPanel caseId={kase.id} invoice={vm.invoices[0]} />
+        ) : null}
 
         <Tabs defaultValue="timeline">
           <TabsList className="flex-wrap">

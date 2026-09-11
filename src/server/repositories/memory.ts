@@ -18,6 +18,7 @@ import {
 import { applyGstAutomationFailed, applyGstFiled, applyGstPrepared } from "@/domain/gst";
 import { applyMsmeAutomationFailed, applyMsmeFiled } from "@/domain/msme";
 import { applyDdPrepared, applyHearingScheduled } from "@/domain/hearing";
+import { applyOcrCorrected } from "@/domain/ocr";
 import { createDraftCase, type IntakeInvoiceInput } from "@/domain/intake";
 import { parseCsv, parseDate, parseMoney, validateImport } from "@/domain/bulk-import";
 import { runAdapter } from "@/orchestrator/run-adapter";
@@ -655,5 +656,47 @@ export class MemoryRepository implements Repository {
     });
 
     return tick({ case: updatedCase, eventId: outcome.result.data?.eventId ?? null });
+  }
+
+  async correctInvoiceOcr(
+    caseId: string,
+    invoiceId: string,
+    corrections: Partial<
+      Pick<
+        Invoice,
+        | "invoiceNumber"
+        | "invoiceDate"
+        | "dueDate"
+        | "taxableValue"
+        | "taxRate"
+        | "taxAmount"
+        | "invoiceTotal"
+        | "outstandingBalance"
+      >
+    >,
+  ) {
+    const kase = mock.getCase(caseId);
+    if (!kase) throw new Error(`correctInvoiceOcr: case ${caseId} not found`);
+
+    mock.mutateInvoice(invoiceId, { ...corrections, extractionConfidence: 0.99 });
+    const invoice = mock.listInvoicesForCase(caseId).find((i) => i.id === invoiceId);
+    if (!invoice) throw new Error(`correctInvoiceOcr: invoice ${invoiceId} not found on case ${caseId}`);
+
+    const outstandingBalance = corrections.outstandingBalance ?? invoice.outstandingBalance;
+    const corrected = applyOcrCorrected({ ...kase, principalOutstanding: outstandingBalance });
+    const updatedCase = mock.mutateCase(caseId, {
+      ...corrected.updatedCase,
+      principalOutstanding: outstandingBalance,
+      activatedAt: corrected.updatedCase.status === "active" ? new Date().toISOString() : kase.activatedAt,
+    });
+
+    mock.appendAudit({
+      action: "ocr.corrected",
+      entity: "invoice",
+      entityId: invoiceId,
+      reason: `Staff corrected extracted fields (was low-confidence); ${corrected.note}`,
+    });
+
+    return tick({ case: updatedCase, invoice });
   }
 }

@@ -576,4 +576,27 @@ export class SupabaseRepository implements Repository {
     // calendar_events row, audit it.
     throw new Error("SupabaseRepository.scheduleHearing: not wired yet -- see src/domain/hearing.ts");
   }
+
+  async correctInvoiceOcr(
+    _caseId: string,
+    _invoiceId: string,
+    _corrections: Partial<
+      Pick<
+        Invoice,
+        | "invoiceNumber"
+        | "invoiceDate"
+        | "dueDate"
+        | "taxableValue"
+        | "taxRate"
+        | "taxAmount"
+        | "invoiceTotal"
+        | "outstandingBalance"
+      >
+    >,
+  ): Promise<{ case: RecoveryCase; invoice: Invoice }> {
+    // TODO(api): UPDATE the invoice row (preserve document_versions
+    // provenance), UPDATE the case via src/domain/ocr.ts applyOcrCorrected(),
+    // audit it.
+    throw new Error("SupabaseRepository.correctInvoiceOcr: not wired yet -- see src/domain/ocr.ts");
+  }
 }
