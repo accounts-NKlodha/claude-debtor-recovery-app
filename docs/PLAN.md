@@ -27,7 +27,7 @@ tasks share no files; shared-contract edits are serialized.
 - [x] 2.2b **Repository seam**: `src/server/repository.ts` interface + `MemoryRepository` (default, tested) + `SupabaseRepository` (type-checked, not live-verified) + `getRepo()` factory. Every page reads through it instead of `@/lib/mock-data` directly `[gate]`
 - [ ] 2.3 **M2 Intake**: manual invoice form (zod), bulk CSV import → `ImportResult` report UI, OCR review screen with provenance. Tests: scenarios 0,1,2 `[gate]`
 - [ ] 2.4 **M3 Workflow API**: persist `orchestration_runs`/`step_attempts`, wire `advance()` to a job runner (pg-boss-style interface, in-memory impl for pilot), timer scheduling. Tests: scenarios 3,4,14,15,16 `[gate]`
-- [ ] 2.5 **M4 Payments**: record payment + `allocateRecovery` persistence, client-confirm toggle → cancel escalation. Test: scenario 7 `[gate]`
+- [x] 2.5 **M4 Payments**: record payment + `allocateRecovery` persistence, client-confirm toggle → cancel escalation. Test: scenario 7 `[gate]` — end-to-end through `/payments` → `applyConfirmedPayment` → `advance()`, live-tested in browser (not just unit tests)
 - [ ] 2.6 **M5 Communications**: send via adapter + `runAdapter`, delivery webhooks, unified log UI, reply classify + staff review queue. Tests: scenarios 5,6 `[gate]`
 - [ ] 2.7 **M6 GST**: compose form with live field-limit counters, pack prepare, assisted-session + human-confirm + capture, drift → urgent task. Tests: scenarios 8,9 `[gate]`
 - [ ] 2.8 **M7 MSME**: seven-stage wizard, save/resume, immutable preview snapshot. Test: scenario 10 `[gate]`
