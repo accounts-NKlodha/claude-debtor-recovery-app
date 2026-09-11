@@ -29,6 +29,7 @@ export default async function GstPage({ params }: { params: Promise<{ caseId: st
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
+        eyebrow={`Case ${caseId} · ${pack.clientName}`}
         title="GST taxpayer communication"
         description="Prepare and file a communication on the GST portal. The system prefills and validates; a person completes the CAPTCHA and presses Send."
       />

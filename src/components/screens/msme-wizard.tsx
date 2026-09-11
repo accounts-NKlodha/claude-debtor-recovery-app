@@ -171,6 +171,21 @@ export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
 
   return (
     <div className="flex flex-col gap-5">
+      {/* Evidence gate */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {[
+          { label: "Stages complete", value: `${Math.min(step, STAGES.length - 1)}/${STAGES.length - 1}` },
+          { label: "Preview snapshot", value: preview ? "Generated" : "Pending" },
+          { label: "Acknowledgement", value: acknowledgement ? "Diary ID captured" : "Pending" },
+          { label: "Filing state", value: locked ? "Submitted (locked)" : "Draft" },
+        ].map((tile) => (
+          <div key={tile.label} className="rounded-lg border border-border bg-card p-3">
+            <p className="text-sm font-semibold">{tile.value}</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">{tile.label}</p>
+          </div>
+        ))}
+      </div>
+
       {/* Stepper */}
       <ol className="flex flex-wrap gap-2" aria-label="MSME ODR stages">
         {STAGES.map((s, i) => {

@@ -280,7 +280,38 @@ export function GstScreen({ pack }: { pack: GstPack }) {
         </Card>
       </div>
 
-      <aside className="lg:sticky lg:top-20 lg:self-start">
+      <aside className="flex flex-col gap-4 lg:sticky lg:top-20 lg:self-start">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4" /> Evidence gate
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2 pt-0 text-sm">
+            {[
+              { label: "Manifest", value: valid ? "Locked" : "Pending field fixes" },
+              {
+                label: "Attachments",
+                value: `${attachments.length} verified`,
+              },
+              {
+                label: "Assisted session",
+                value: session === "idle" ? "Not opened" : session === "opening" ? "Preparing…" : "Opened",
+              },
+              {
+                label: "Reference / screenshot",
+                value: session === "sent" || session === "filing" ? (ref || "Awaiting entry") : "Pending",
+              },
+              { label: "7-day timer", value: session === "filing" ? "Starting…" : "Not started" },
+            ].map((row) => (
+              <div key={row.label} className="flex items-center justify-between gap-3">
+                <span className="text-xs text-muted-foreground">{row.label}</span>
+                <span className="text-xs font-semibold">{row.value}</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">

@@ -26,6 +26,7 @@ export default async function MsmePage({ params }: { params: Promise<{ caseId: s
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
+        eyebrow={`Case ${caseId} · ${org?.legalEntityName ?? "—"}`}
         title="MSME ODR / MSEFC filing"
         description="Seven-stage filing observed from the MSME Samadhaan flow. Save and resume at any stage; the submitted snapshot is immutable."
       />
