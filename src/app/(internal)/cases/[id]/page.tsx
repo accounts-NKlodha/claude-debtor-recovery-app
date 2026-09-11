@@ -1,38 +1,39 @@
 import { notFound } from "next/navigation";
 import { CaseDetail, type CaseDetailVM } from "@/components/screens/case-detail";
-import {
-  assigneeName,
-  getCase,
-  getDebtor,
-  getOrg,
-  listCommunicationsForCase,
-  listInvoicesForCase,
-  listPaymentsForCase,
-  listTasksForCase,
-} from "@/lib/mock-data";
+import { getRepo } from "@/server/repo";
 
-// TODO(api): replace mock with server fetch + row-level authorization.
+// TODO(api): add row-level authorization once auth lands (client users must
+// only reach cases in their own organisation).
 export default async function CaseDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const kase = getCase(id);
+  const repo = getRepo();
+  const kase = await repo.getCase(id);
   if (!kase) notFound();
 
-  const debtor = getDebtor(kase.debtorId);
+  const [debtor, org, invoices, communications, payments, tasks] = await Promise.all([
+    repo.getDebtor(kase.debtorId),
+    repo.getOrg(kase.organisationId),
+    repo.listInvoicesForCase(id),
+    repo.listCommunicationsForCase(id),
+    repo.listPaymentsForCase(id),
+    repo.listTasksForCase(id),
+  ]);
+
   const vm: CaseDetailVM = {
     kase,
-    clientName: getOrg(kase.organisationId)?.legalEntityName ?? "—",
+    clientName: org?.legalEntityName ?? "—",
     debtorName: debtor?.name ?? "—",
     debtorGstin: debtor?.gstin ?? null,
     debtorAddress: debtor?.address ?? null,
-    assignee: assigneeName(kase.assigneeId),
-    invoices: listInvoicesForCase(id),
-    communications: listCommunicationsForCase(id),
-    payments: listPaymentsForCase(id),
-    tasks: listTasksForCase(id).filter((t) => !t.resolvedAt),
+    assignee: await repo.assigneeName(kase.assigneeId),
+    invoices,
+    communications,
+    payments,
+    tasks: tasks.filter((t) => !t.resolvedAt),
   };
 
   return <CaseDetail vm={vm} />;

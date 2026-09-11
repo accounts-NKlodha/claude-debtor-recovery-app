@@ -34,7 +34,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { ORGANISATIONS } from "@/lib/mock-data";
+import type { Organisation } from "@/contract/types";
 
 type Surface = "internal" | "client";
 type NavItem = { href: string; label: string; Icon: React.ComponentType<{ className?: string }> };
@@ -99,15 +99,19 @@ function NavLinks({
 
 export function AppShell({
   surface,
+  organisations,
   children,
 }: {
   surface: Surface;
+  /** fetched server-side (getRepo().listOrganisations()) and passed down --
+   * this client component never imports mock/data-access modules directly. */
+  organisations: Organisation[];
   children: React.ReactNode;
 }) {
   const items = surface === "internal" ? INTERNAL_NAV : CLIENT_NAV;
   const [collapsed, setCollapsed] = React.useState(false);
   const [mobileOpen, setMobileOpen] = React.useState(false);
-  const [org, setOrg] = React.useState(ORGANISATIONS[0]);
+  const [org, setOrg] = React.useState(organisations[0]);
 
   return (
     <div className="flex min-h-screen w-full flex-col">
@@ -145,13 +149,13 @@ export function AppShell({
               trigger={
                 <span className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2 text-xs font-medium">
                   <Building2 className="h-3.5 w-3.5" />
-                  <span className="max-w-32 truncate">{org.legalEntityName}</span>
+                  <span className="max-w-32 truncate">{org?.legalEntityName ?? "Select client"}</span>
                 </span>
               }
               align="start"
             >
               <DropdownMenuLabel>Switch organisation</DropdownMenuLabel>
-              {ORGANISATIONS.map((o) => (
+              {organisations.map((o) => (
                 <DropdownMenuItem key={o.id} onClick={() => setOrg(o)}>
                   {o.legalEntityName}
                 </DropdownMenuItem>

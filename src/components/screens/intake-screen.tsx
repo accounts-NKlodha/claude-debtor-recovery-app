@@ -6,7 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Upload, FileSpreadsheet, CircleCheck, CircleAlert } from "lucide-react";
 import { manualInvoiceSchema, reminderComposeSchema } from "@/contract/schemas";
 import type { ImportResult } from "@/contract/types";
-import { stubBulkImport } from "@/lib/mock-data";
+import { runBulkImport } from "@/app/actions/bulk-import";
 import { formatInr } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -186,11 +186,16 @@ function BulkImport() {
   const [dragOver, setDragOver] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
+  const [pending, setPending] = React.useState(false);
+
   const handleFile = (file: File | undefined) => {
     if (!file) return;
     setFileName(file.name);
-    // TODO(api): send file to the server action; this returns a stub ImportResult.
-    setResult(stubBulkImport(file.name));
+    setPending(true);
+    // TODO(api): upload the file content, not just its name, once Storage is wired.
+    runBulkImport(file.name)
+      .then(setResult)
+      .finally(() => setPending(false));
   };
 
   return (
@@ -226,7 +231,11 @@ function BulkImport() {
           className="sr-only"
           onChange={(e) => handleFile(e.target.files?.[0])}
         />
-        {fileName ? <p className="text-xs text-muted-foreground">Loaded: {fileName}</p> : null}
+        {fileName ? (
+          <p className="text-xs text-muted-foreground">
+            {pending ? `Validating ${fileName}…` : `Loaded: ${fileName}`}
+          </p>
+        ) : null}
       </div>
 
       {result ? (

@@ -1,24 +1,32 @@
 import { PageHeader } from "@/components/ui/page-header";
 import { CommsLog, type CommRow } from "@/components/screens/comms-log";
-import { COMMUNICATIONS, getCase, getDebtor, getOrg } from "@/lib/mock-data";
+import { getRepo } from "@/server/repo";
 
 export const metadata = { title: "Communications — Debtrecover" };
 
-// TODO(api): replace mock with server fetch.
+// TODO(api): scope to the signed-in staff member's org access once auth lands.
 export default async function CommunicationsPage({
   searchParams,
 }: {
   searchParams: Promise<{ case?: string }>;
 }) {
   const { case: caseId } = await searchParams;
-  const rows: CommRow[] = COMMUNICATIONS.map((c) => {
-    const k = getCase(c.caseId);
-    return {
-      ...c,
-      clientName: getOrg(c.organisationId)?.legalEntityName ?? "—",
-      debtorName: k ? (getDebtor(k.debtorId)?.name ?? "—") : "—",
-    };
-  });
+  const repo = getRepo();
+  const comms = await repo.listAllCommunications();
+  const rows: CommRow[] = await Promise.all(
+    comms.map(async (c) => {
+      const kase = await repo.getCase(c.caseId);
+      const [org, debtor] = await Promise.all([
+        repo.getOrg(c.organisationId),
+        kase ? repo.getDebtor(kase.debtorId) : Promise.resolve(undefined),
+      ]);
+      return {
+        ...c,
+        clientName: org?.legalEntityName ?? "—",
+        debtorName: debtor?.name ?? "—",
+      };
+    }),
+  );
 
   return (
     <div className="flex flex-col gap-6">

@@ -4,29 +4,29 @@ import { Badge } from "@/components/ui/badge";
 import { RecoveryTrend } from "@/components/charts/recovery-trend";
 import { AgeingBars } from "@/components/charts/ageing-bars";
 import { StageFunnel } from "@/components/charts/stage-funnel";
-import {
-  ORGANISATIONS,
-  RECOVERY_TREND,
-  STAGE_FUNNEL,
-  clientOverview,
-  listCasesForOrg,
-} from "@/lib/mock-data";
+import { getRepo } from "@/server/repo";
 import { CLIENT_SAFE_LABEL } from "@/contract/enums";
 import { formatInr, formatInrCompact } from "@/lib/utils";
 
 export const metadata = { title: "Overview — Debtrecover" };
 
-// TODO(api): replace mock with server fetch scoped to the signed-in client org.
-export default function ClientOverviewPage() {
-  const org = ORGANISATIONS[0];
-  const o = clientOverview(org.id);
-  const cases = listCasesForOrg(org.id);
+// TODO(api): scope to the signed-in client's selected organisation once auth lands.
+export default async function ClientOverviewPage() {
+  const repo = getRepo();
+  const orgs = await repo.listOrganisations();
+  const org = orgs[0];
+  const [overview, cases, trend, stageFunnel] = await Promise.all([
+    repo.clientOverview(org.id),
+    repo.listCasesForOrg(org.id),
+    repo.recoveryTrend(),
+    repo.stageFunnel(),
+  ]);
 
   const tiles = [
-    { label: "Actions required from you", value: String(o.actionsRequired) },
-    { label: "Total outstanding", value: formatInrCompact(o.totalOutstanding) },
-    { label: "Recovered", value: formatInrCompact(o.recovered) },
-    { label: "Recovery rate", value: `${o.recoveryRatePct}%` },
+    { label: "Actions required from you", value: String(overview.actionsRequired) },
+    { label: "Total outstanding", value: formatInrCompact(overview.totalOutstanding) },
+    { label: "Recovered", value: formatInrCompact(overview.recovered) },
+    { label: "Recovery rate", value: `${overview.recoveryRatePct}%` },
   ];
 
   return (
@@ -53,12 +53,12 @@ export default function ClientOverviewPage() {
             <CardTitle>Upcoming action</CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            {o.upcomingAction ? (
+            {overview.upcomingAction ? (
               <div className="flex items-center justify-between gap-3">
-                <span className="text-sm">{o.upcomingAction.label}</span>
+                <span className="text-sm">{overview.upcomingAction.label}</span>
                 <span className="text-xs text-muted-foreground">
-                  {o.upcomingAction.when
-                    ? new Date(o.upcomingAction.when).toLocaleDateString("en-IN", {
+                  {overview.upcomingAction.when
+                    ? new Date(overview.upcomingAction.when).toLocaleDateString("en-IN", {
                         dateStyle: "medium",
                       })
                     : "Scheduling"}
@@ -76,7 +76,9 @@ export default function ClientOverviewPage() {
           </CardHeader>
           <CardContent className="flex items-center justify-between pt-0 text-sm">
             <span>Estimated success fee</span>
-            <span className="tabular-nums font-semibold">{formatInr(o.feeSummary.estimatedFee)}</span>
+            <span className="tabular-nums font-semibold">
+              {formatInr(overview.feeSummary.estimatedFee)}
+            </span>
           </CardContent>
         </Card>
       </div>
@@ -87,7 +89,13 @@ export default function ClientOverviewPage() {
             <CardTitle>Recovery trend</CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            <RecoveryTrend data={RECOVERY_TREND} />
+            {trend.length > 0 ? (
+              <RecoveryTrend data={trend} />
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No trend data yet — recovery allocations will populate this once payments are recorded.
+              </p>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -95,7 +103,7 @@ export default function ClientOverviewPage() {
             <CardTitle>Ageing</CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            <AgeingBars data={o.ageing} />
+            <AgeingBars data={overview.ageing} />
           </CardContent>
         </Card>
       </div>
@@ -105,7 +113,7 @@ export default function ClientOverviewPage() {
           <CardTitle>Stage-wise progress</CardTitle>
         </CardHeader>
         <CardContent className="pt-0">
-          <StageFunnel data={STAGE_FUNNEL} />
+          <StageFunnel data={stageFunnel} />
         </CardContent>
       </Card>
 

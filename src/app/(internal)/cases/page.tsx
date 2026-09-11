@@ -1,12 +1,12 @@
 import { PageHeader } from "@/components/ui/page-header";
 import { CasesTable } from "@/components/screens/cases-table";
-import { caseRows } from "@/lib/mock-data";
+import { getRepo } from "@/server/repo";
 
 export const metadata = { title: "Cases — Debtrecover" };
 
-// TODO(api): replace mock with server fetch (RLS-scoped list).
-export default function CasesPage() {
-  const rows = caseRows();
+// TODO(api): scope to the signed-in staff member's org access once auth lands.
+export default async function CasesPage() {
+  const rows = await getRepo().caseRows();
   return (
     <div className="flex flex-col gap-6">
       <PageHeader

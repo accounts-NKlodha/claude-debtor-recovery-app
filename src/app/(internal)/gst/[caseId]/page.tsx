@@ -1,24 +1,29 @@
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/ui/page-header";
 import { GstScreen, type GstPack } from "@/components/screens/gst-screen";
-import { getCase, getDebtor, getOrg, listInvoicesForCase } from "@/lib/mock-data";
+import { getRepo } from "@/server/repo";
 
 export const metadata = { title: "GST communication — Debtrecover" };
 
 // TODO(api): replace mock with server fetch.
 export default async function GstPage({ params }: { params: Promise<{ caseId: string }> }) {
   const { caseId } = await params;
-  const kase = getCase(caseId);
+  const repo = getRepo();
+  const kase = await repo.getCase(caseId);
   if (!kase) notFound();
-  const debtor = getDebtor(kase.debtorId);
+  const [debtor, org, invoices] = await Promise.all([
+    repo.getDebtor(kase.debtorId),
+    repo.getOrg(kase.organisationId),
+    repo.listInvoicesForCase(caseId),
+  ]);
 
   const pack: GstPack = {
     caseId,
     debtorName: debtor?.name ?? "—",
     recipientGstin: debtor?.gstin ?? "08AAAAA0000A1Z0",
-    clientName: getOrg(kase.organisationId)?.legalEntityName ?? "—",
+    clientName: org?.legalEntityName ?? "—",
     principalOutstanding: kase.principalOutstanding,
-    invoiceCount: Math.max(1, listInvoicesForCase(caseId).length),
+    invoiceCount: Math.max(1, invoices.length),
   };
 
   return (

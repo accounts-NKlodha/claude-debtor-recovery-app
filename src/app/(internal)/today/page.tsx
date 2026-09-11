@@ -1,15 +1,15 @@
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { TodayQueue } from "@/components/screens/today-queue";
-import { DASHBOARD_KPIS, urgentQueue } from "@/lib/mock-data";
+import { getRepo } from "@/server/repo";
 import { formatInrCompact } from "@/lib/utils";
 
 export const metadata = { title: "Today / Urgent — Debtrecover" };
 
-// TODO(api): replace mock with server fetch (auth + org scoping applied here).
-export default function TodayPage() {
-  const queue = urgentQueue();
-  const k = DASHBOARD_KPIS;
+// TODO(api): scope to the signed-in staff member's org access once auth lands.
+export default async function TodayPage() {
+  const repo = getRepo();
+  const [queue, k] = await Promise.all([repo.urgentQueue(), repo.dashboardKpis()]);
 
   const tiles = [
     { label: "Open cases", value: String(k.openCases) },
