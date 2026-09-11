@@ -179,6 +179,17 @@ export interface Repository {
    * only the extracted values are corrected) and satisfies the
    * staff-validation gate.
    */
+  /** Tamper-evident-in-spirit append-only audit log (PRD §13). Newest first. */
+  listAuditLog(limit?: number): Promise<import("@/lib/mock-data").AuditEntry[]>;
+
+  /**
+   * Global automation kill switch (PRD §5 "Admin owns the global kill
+   * switch. Overrides ... require a reason and audit record."). Stops new
+   * automated external actions; does not delete queued evidence or close cases.
+   */
+  getAutomationState(): Promise<{ enabled: boolean }>;
+  setAutomationState(enabled: boolean, reason: string): Promise<{ enabled: boolean }>;
+
   correctInvoiceOcr(
     caseId: string,
     invoiceId: string,

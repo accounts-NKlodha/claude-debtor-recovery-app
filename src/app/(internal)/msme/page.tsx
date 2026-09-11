@@ -27,8 +27,9 @@ export default async function MsmeIndexPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="DD / Hearings — MSME ODR"
-        description="Cases in MSME ODR / MSEFC. Open one for the seven-stage filing wizard and hearing tracking."
+        eyebrow="Portal runs · MSME ODR / MSEFC"
+        title="MSME ODR filing & hearings"
+        description="Seven-stage assisted filing, DD preparation and hearing tracking. Post-submit portal login/live data is on hold pending live credentials."
       />
       {rows.length === 0 ? (
         <EmptyState title="No cases in MSME ODR right now" />

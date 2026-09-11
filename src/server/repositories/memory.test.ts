@@ -71,4 +71,19 @@ describe("MemoryRepository", () => {
     expect(casesCreated).toBe(1);
     expect((await repo.listAllCases()).length).toBe(before + 1);
   });
+
+  it("requires a reason to change the global automation switch, and audits it", async () => {
+    const { enabled: before } = await repo.getAutomationState();
+    await expect(repo.setAutomationState(!before, "")).rejects.toThrow(/reason/i);
+
+    const { enabled: after } = await repo.setAutomationState(!before, "pausing for a drift investigation");
+    expect(after).toBe(!before);
+
+    const log = await repo.listAuditLog(5);
+    expect(log[0].action).toMatch(/automation\.(enabled|disabled)/);
+    expect(log[0].reason).toBe("pausing for a drift investigation");
+
+    // restore so other tests in this file see the default state
+    await repo.setAutomationState(before, "test cleanup");
+  });
 });

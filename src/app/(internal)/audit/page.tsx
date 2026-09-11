@@ -1,5 +1,49 @@
-import { SlicePlaceholder } from "@/components/ui/slice-placeholder";
+import { ScrollText } from "lucide-react";
+import { PageHeader } from "@/components/ui/page-header";
+import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { getRepo } from "@/server/repo";
 
-export default function Page() {
-  return <SlicePlaceholder title="Audit / Security" note="Tamper-evident audit chain, access logs and security events." />;
+export const metadata = { title: "Audit / Security — Debtrecover" };
+
+function fmtDate(s: string) {
+  return new Date(s).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
+}
+
+export default async function AuditPage() {
+  const entries = await getRepo().listAuditLog(200);
+
+  return (
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        eyebrow="Audit & security"
+        title="Audit event log"
+        description="Every create, change, view, external action and admin override is recorded here, append-only, newest first."
+      />
+
+      {entries.length === 0 ? (
+        <EmptyState title="No audit events yet" />
+      ) : (
+        <div className="flex flex-col gap-2">
+          {entries.map((e) => (
+            <Card key={e.id}>
+              <CardContent className="flex items-start gap-3 p-4">
+                <ScrollText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="font-mono text-xs font-medium">{e.action}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {e.entity} &middot; {e.entityId}
+                    </span>
+                  </div>
+                  {e.reason ? <p className="text-sm">{e.reason}</p> : null}
+                </div>
+                <span className="shrink-0 text-xs text-muted-foreground">{fmtDate(e.createdAt)}</span>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

@@ -26,6 +26,7 @@ export default async function PaymentsPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
+        eyebrow="Replies & payments"
         title="Payment receipts & confirmation"
         description="Record receipts and capture client confirmation. A confirmed receipt immediately cancels pending escalation for that case."
       />

@@ -699,4 +699,24 @@ export class MemoryRepository implements Repository {
 
     return tick({ case: updatedCase, invoice });
   }
+
+  async listAuditLog(limit = 200) {
+    return tick(mock.AUDIT_LOG.slice(0, limit));
+  }
+
+  async getAutomationState() {
+    return tick({ enabled: mock.getAutomationEnabled() });
+  }
+
+  async setAutomationState(enabled: boolean, reason: string) {
+    if (!reason.trim()) throw new Error("setAutomationState: a reason is required");
+    const result = mock.setAutomationEnabled(enabled);
+    mock.appendAudit({
+      action: enabled ? "automation.enabled" : "automation.disabled",
+      entity: "organisation",
+      entityId: "global",
+      reason,
+    });
+    return tick({ enabled: result });
+  }
 }

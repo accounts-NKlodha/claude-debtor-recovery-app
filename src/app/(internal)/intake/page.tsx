@@ -9,8 +9,9 @@ export default async function IntakePage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Intake / OCR"
-        description="Compose reminders and bring invoices into the system — one at a time or by bulk CSV. Uploads create draft cases; they do not activate recovery."
+        eyebrow="Intake & OCR"
+        title="Bring invoices into the system"
+        description="One at a time or by bulk CSV. An upload starts automatic preparation immediately but never activates a case — certification, staff validation and the age gate still apply."
       />
       <IntakeScreen organisations={organisations} />
     </div>

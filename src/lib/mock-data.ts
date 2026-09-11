@@ -1053,6 +1053,17 @@ const AUDIT_LOG_SEED: AuditEntry[] = [
 let nextAuditSeq = AUDIT_LOG_SEED.length;
 export const AUDIT_LOG: AuditEntry[] = [...AUDIT_LOG_SEED];
 
+/** Global automation kill switch (PRD §5). Module-level state -- see the
+ * mutation-helpers note above re: process-lifetime-only, not multi-instance-safe. */
+let automationEnabled = true;
+export function getAutomationEnabled() {
+  return automationEnabled;
+}
+export function setAutomationEnabled(enabled: boolean) {
+  automationEnabled = enabled;
+  return automationEnabled;
+}
+
 export function appendAudit(entry: Omit<AuditEntry, "id" | "createdAt">) {
   nextAuditSeq += 1;
   AUDIT_LOG.unshift({ ...entry, id: `audit-${nextAuditSeq}`, createdAt: new Date().toISOString() });

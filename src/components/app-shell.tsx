@@ -45,8 +45,8 @@ const INTERNAL_NAV: NavItem[] = [
   { href: "/intake", label: "Intake / OCR", Icon: ScanText },
   { href: "/communications", label: "Communications", Icon: MessageSquare },
   { href: "/payments", label: "Replies / Payments", Icon: Wallet },
-  { href: "/gst", label: "Portal runs", Icon: ShieldCheck },
-  { href: "/msme", label: "DD / Hearings", Icon: Gavel },
+  { href: "/gst", label: "GST portal runs", Icon: ShieldCheck },
+  { href: "/msme", label: "MSME ODR / DD / Hearings", Icon: Gavel },
   { href: "/clients", label: "Clients / Policy", Icon: Building2 },
   { href: "/audit", label: "Audit / Security", Icon: ScrollText },
 ];
@@ -62,10 +62,12 @@ const CLIENT_NAV: NavItem[] = [
 function NavLinks({
   items,
   collapsed,
+  counts,
   onNavigate,
 }: {
   items: NavItem[];
   collapsed: boolean;
+  counts?: Partial<Record<string, number>>;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -73,6 +75,7 @@ function NavLinks({
     <nav className="flex flex-col gap-0.5 p-2" aria-label="Primary">
       {items.map(({ href, label, Icon }) => {
         const active = pathname === href || pathname.startsWith(href + "/");
+        const count = counts?.[href];
         return (
           <Link
             key={href}
@@ -89,7 +92,21 @@ function NavLinks({
             )}
           >
             <Icon className="h-4 w-4 shrink-0" />
-            {!collapsed && <span className="truncate">{label}</span>}
+            {!collapsed && (
+              <>
+                <span className="truncate">{label}</span>
+                {count ? (
+                  <span
+                    className={cn(
+                      "ml-auto rounded-full px-1.5 text-[11px] tabular-nums",
+                      active ? "bg-accent-foreground/15" : "bg-muted",
+                    )}
+                  >
+                    {count}
+                  </span>
+                ) : null}
+              </>
+            )}
           </Link>
         );
       })}
@@ -100,12 +117,15 @@ function NavLinks({
 export function AppShell({
   surface,
   organisations,
+  counts,
   children,
 }: {
   surface: Surface;
   /** fetched server-side (getRepo().listOrganisations()) and passed down --
    * this client component never imports mock/data-access modules directly. */
   organisations: Organisation[];
+  /** nav-item href -> badge count, computed server-side in the layout. */
+  counts?: Partial<Record<string, number>>;
   children: React.ReactNode;
 }) {
   const items = surface === "internal" ? INTERNAL_NAV : CLIENT_NAV;
@@ -197,7 +217,7 @@ export function AppShell({
           )}
         >
           <div className="sticky top-14">
-            <NavLinks items={items} collapsed={collapsed} />
+            <NavLinks items={items} collapsed={collapsed} counts={counts} />
           </div>
         </aside>
 
@@ -221,7 +241,7 @@ export function AppShell({
                   <X className="h-4 w-4" />
                 </Button>
               </div>
-              <NavLinks items={items} collapsed={false} onNavigate={() => setMobileOpen(false)} />
+              <NavLinks items={items} collapsed={false} counts={counts} onNavigate={() => setMobileOpen(false)} />
             </div>
           </div>
         )}

@@ -16,6 +16,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import type {
+  AuditEventRow,
   CommunicationRow,
   Database,
   InvoiceRow,
@@ -598,5 +599,34 @@ export class SupabaseRepository implements Repository {
     // provenance), UPDATE the case via src/domain/ocr.ts applyOcrCorrected(),
     // audit it.
     throw new Error("SupabaseRepository.correctInvoiceOcr: not wired yet -- see src/domain/ocr.ts");
+  }
+
+  async listAuditLog(limit = 200): Promise<import("@/lib/mock-data").AuditEntry[]> {
+    const supabase = await this.db();
+    const res = await supabase
+      .from("audit_events")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    const rows: AuditEventRow[] = unwrap(res, "listAuditLog");
+    return rows.map((r) => ({
+      id: r.id,
+      action: r.action,
+      entity: r.entity,
+      entityId: r.entity_id ?? "",
+      reason: r.reason,
+      createdAt: r.created_at,
+    }));
+  }
+
+  async getAutomationState(): Promise<{ enabled: boolean }> {
+    // TODO(api): back this with a real settings row (or the most recent
+    // automation.enabled/disabled audit_events entry) once a project exists.
+    throw new Error("SupabaseRepository.getAutomationState: not wired yet");
+  }
+
+  async setAutomationState(_enabled: boolean, _reason: string): Promise<{ enabled: boolean }> {
+    // TODO(api): UPDATE the settings row, INSERT an audit_events row.
+    throw new Error("SupabaseRepository.setAutomationState: not wired yet");
   }
 }

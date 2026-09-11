@@ -23,8 +23,9 @@ export default async function GstIndexPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Portal runs — GST"
-        description="Cases on the GST communication route. Open one to prepare and file an assisted portal session."
+        eyebrow="Portal runs · GST communication"
+        title="GST assisted notification"
+        description="Operator-assisted only — staff completes CAPTCHA and final Send. Open a case to prepare and file."
       />
       {rows.length === 0 ? (
         <EmptyState title="No cases on the GST route right now" />
