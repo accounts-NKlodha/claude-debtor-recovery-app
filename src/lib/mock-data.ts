@@ -16,6 +16,7 @@ import type {
 } from "@/contract/types";
 import { CLIENT_SAFE_LABEL } from "@/contract/enums";
 import type { CaseStatus } from "@/contract/enums";
+import { estimateSuccessFee } from "@/domain/fees";
 
 const NOW = new Date("2026-09-11T09:30:00.000Z");
 const iso = (daysFromNow: number, hour = 5) =>
@@ -251,7 +252,7 @@ export const CASES: RecoveryCase[] = [
     waitingOn: "staff",
     automationStartedAt: iso(-24),
     currentStep: "Debtor raised a quality dispute on 2 invoices",
-    blocker: "Settlement offer of ₹18,00,000 needs staff/legal review before response",
+    blocker: "Settlement offer of ₹18,000 needs staff/legal review before response",
     nextScheduledAction: "Staff decision on settlement offer",
     nextScheduledAt: null,
     eligibilityRoute: null,
@@ -293,7 +294,7 @@ export const CASES: RecoveryCase[] = [
     waitingOn: "client",
     automationStartedAt: iso(-14),
     currentStep: "Debtor reply parsed as payment made",
-    blocker: "Client must confirm ₹25,00,000 receipt before escalation is cancelled",
+    blocker: "Client must confirm ₹25,000 receipt before escalation is cancelled",
     nextScheduledAction: "Cancel pending GST escalation on confirmation",
     nextScheduledAt: null,
     eligibilityRoute: null,
@@ -580,7 +581,7 @@ export const COMMUNICATIONS: Communication[] = [
     templateKey: null,
     templateVersion: null,
     subject: null,
-    body: "Payment of 25 lakh done by RTGS on 5th, UTR SBIN0026XXXX. Please confirm.",
+    body: "Payment of ₹25,000 done by RTGS on 5th, UTR SBIN0026XXXX. Please confirm.",
     providerMessageId: "wamid.HBg9",
     threadRef: "thread-8",
     deliveryStatus: "delivered",
@@ -599,7 +600,7 @@ export const COMMUNICATIONS: Communication[] = [
     templateKey: null,
     templateVersion: null,
     subject: "Re: Outstanding dues — quality issue",
-    body: "We dispute invoices SNR/2026/2210 and 2214 due to defective goods. We can settle the balance at ₹18,00,000.",
+    body: "We dispute invoices SNR/2026/2210 and 2214 due to defective goods. We can settle the balance at ₹18,000.",
     providerMessageId: "ses-0044",
     threadRef: "thread-6",
     deliveryStatus: "delivered",
@@ -692,7 +693,7 @@ export const TASKS: WorkflowTask[] = [
     caseId: "case-6",
     organisationId: "org-3",
     type: "settlement_approval",
-    title: "Approve or reject ₹18,00,000 settlement offer — Monsoon Apparel",
+    title: "Approve or reject ₹18,000 settlement offer — Monsoon Apparel",
     waitingOn: "staff",
     assigneeId: "user-2",
     urgent: true,
@@ -718,7 +719,7 @@ export const TASKS: WorkflowTask[] = [
     caseId: "case-8",
     organisationId: "org-1",
     type: "payment_confirmation",
-    title: "Client to confirm ₹25,00,000 RTGS receipt — Nirvana Retail",
+    title: "Client to confirm ₹25,000 RTGS receipt — Nirvana Retail",
     waitingOn: "client",
     assigneeId: "user-1",
     urgent: true,
@@ -972,6 +973,7 @@ export function clientOverview(orgId: string): ClientOverview {
   const outstanding = cs.reduce((s, c) => s + c.principalOutstanding, 0);
   const recovered = cs.reduce((s, c) => s + c.recoveredToDate, 0);
   const denom = outstanding + recovered || 1;
+  const jitoMember = getOrg(orgId)?.jitoMember ?? false;
   const nextCase = cs
     .filter((c) => c.nextScheduledAt)
     .sort((a, b) => (a.nextScheduledAt! < b.nextScheduledAt! ? -1 : 1))[0];
@@ -989,7 +991,7 @@ export function clientOverview(orgId: string): ClientOverview {
           when: nextCase.nextScheduledAt,
         }
       : null,
-    feeSummary: { estimatedFee: Math.round(recovered * 0.08), billed: 0, currency: "INR" },
+    feeSummary: { estimatedFee: estimateSuccessFee(recovered, jitoMember), billed: 0, currency: "INR" },
     stageWise: STAGE_FUNNEL.map((s) => ({ stage: s.stage, value: s.value })),
     ageing: AGEING_BUCKETS.map((a) => ({ bucket: a.bucket, amount: a.amount })),
   };

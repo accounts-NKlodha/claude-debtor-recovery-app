@@ -15,6 +15,7 @@
  */
 
 import { createClient } from "@/lib/supabase/server";
+import { estimateSuccessFee } from "@/domain/fees";
 import type {
   AuditEventRow,
   CommunicationRow,
@@ -408,10 +409,11 @@ export class SupabaseRepository implements Repository {
   }
 
   async clientOverview(orgId: string): Promise<ClientOverview> {
-    const [cases, tasks, ageing] = await Promise.all([
+    const [cases, tasks, ageing, org] = await Promise.all([
       this.listCasesForOrg(orgId),
       this.openTasks(orgId),
       this.ageingBuckets(),
+      this.getOrg(orgId),
     ]);
     const outstanding = cases.reduce((s, c) => s + c.principalOutstanding, 0);
     const recovered = cases.reduce((s, c) => s + c.recoveredToDate, 0);
@@ -428,7 +430,11 @@ export class SupabaseRepository implements Repository {
       upcomingAction: nextCase
         ? { label: CLIENT_SAFE_LABEL[nextCase.status] ?? "In progress", when: nextCase.nextScheduledAt }
         : null,
-      feeSummary: { estimatedFee: Math.round(recovered * 0.08), billed: 0, currency: "INR" },
+      feeSummary: {
+        estimatedFee: estimateSuccessFee(recovered, org?.jitoMember ?? false),
+        billed: 0,
+        currency: "INR",
+      },
       stageWise: (await this.stageFunnel()).map((s) => ({ stage: s.stage, value: s.value })),
       ageing: ageing.map((a) => ({ bucket: a.bucket, amount: a.amount })),
     };
