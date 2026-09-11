@@ -47,8 +47,28 @@ describe("MemoryRepository", () => {
     expect(overview.totalOutstanding).toBeGreaterThanOrEqual(0);
   });
 
-  it("passes through the bulk-import stub", async () => {
-    const result = await repo.bulkImport("debtors.csv");
-    expect(result.totalRows).toBeGreaterThan(0);
+  it("validates a bulk-import CSV without persisting anything", async () => {
+    const csv = [
+      "client_code,legal_entity_name,creditor_gstin,debtor_name,debtor_gstin,debtor_mobile,debtor_email,invoice_number,invoice_date,due_date,taxable_value,tax_rate,tax_amount,invoice_total,adjustments,total_due,ledger_as_of,client_certified,group_key,notes",
+      "NKL-X,X Pvt Ltd,08AAAAA0000A1Z5,New Debtor,29ZZZZZ9999Z1Z1,9876543210,x@example.com,NEW-1,2026-06-01,2026-07-01,100000,18,18000,118000,0,118000,2026-08-01,yes,,",
+    ].join("\n");
+    const result = await repo.validateBulkImport(csv);
+    expect(result.validRows).toBe(1);
+    expect(await repo.listAllCases()).toHaveLength(mock.CASES.length); // unchanged
+  });
+
+  it("commits valid rows as new draft cases, one per row, never partially", async () => {
+    const before = (await repo.listAllCases()).length;
+    const org = mock.ORGANISATIONS[0];
+    const csv = [
+      "client_code,legal_entity_name,creditor_gstin,debtor_name,debtor_gstin,debtor_mobile,debtor_email,invoice_number,invoice_date,due_date,taxable_value,tax_rate,tax_amount,invoice_total,adjustments,total_due,ledger_as_of,client_certified,group_key,notes",
+      "NKL-X,X Pvt Ltd,08AAAAA0000A1Z5,Committed Debtor,29ZZZZZ8888Z1Z1,9876543211,y@example.com,COMMIT-1,2026-06-01,2026-07-01,50000,18,9000,59000,0,59000,2026-08-01,yes,,",
+      "NKL-X,X Pvt Ltd,08AAAAA0000A1Z5,Committed Debtor,,bad-phone,,COMMIT-2,not-a-date,,abc,18,9000,59000,0,59000,2026-08-01,yes,,",
+    ].join("\n");
+    const { result, casesCreated } = await repo.commitBulkImport(org.id, csv);
+    expect(result.validRows).toBe(1);
+    expect(result.errorRows).toBe(1);
+    expect(casesCreated).toBe(1);
+    expect((await repo.listAllCases()).length).toBe(before + 1);
   });
 });

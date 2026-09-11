@@ -18,17 +18,31 @@ import {
 import { applyGstAutomationFailed, applyGstFiled, applyGstPrepared } from "@/domain/gst";
 import { applyMsmeAutomationFailed, applyMsmeFiled } from "@/domain/msme";
 import { applyDdPrepared, applyHearingScheduled } from "@/domain/hearing";
+import { createDraftCase, type IntakeInvoiceInput } from "@/domain/intake";
+import { parseCsv, parseDate, parseMoney, validateImport } from "@/domain/bulk-import";
 import { runAdapter } from "@/orchestrator/run-adapter";
 import { getAdapters } from "@/adapters";
-import { gstComposeSchema, type GstComposeInput } from "@/contract/schemas";
+import { gstComposeSchema, type GstComposeInput, type ManualInvoiceInput } from "@/contract/schemas";
 import type { MsmeStage } from "@/contract/adapters";
-import type { Communication, PaymentRecord } from "@/contract/types";
+import type { Communication, Invoice, PaymentRecord, RecoveryCase } from "@/contract/types";
 import type { AgeingBucket, DashboardKpis, Repository, StagePoint, TrendPoint } from "../repository";
 
 async function tick<T>(value: T): Promise<T> {
   // Yield a microtask so this behaves like a real async boundary in tests
   // and doesn't let callers accidentally rely on synchronous resolution.
   return Promise.resolve(value);
+}
+
+/** (debtor_gstin|debtor_name)::invoice_number keys already in the system, for
+ * the bulk importer's duplicate check (matches src/domain/bulk-import.ts). */
+function buildKnownInvoiceKeys(): Set<string> {
+  return new Set(
+    mock.INVOICES.map((inv) => {
+      const debtor = mock.getDebtor(inv.debtorId);
+      const key = (debtor?.gstin || debtor?.name || "").toLowerCase();
+      return `${key}::${inv.invoiceNumber.toLowerCase()}`;
+    }),
+  );
 }
 
 export class MemoryRepository implements Repository {
@@ -101,8 +115,138 @@ export class MemoryRepository implements Repository {
     return tick(mock.clientOverview(orgId));
   }
 
-  async bulkImport(fileName: string) {
-    return tick(mock.stubBulkImport(fileName));
+  async createCaseFromManualInvoice(organisationId: string, input: ManualInvoiceInput) {
+    const org = mock.getOrg(organisationId);
+    if (!org) throw new Error(`createCaseFromManualInvoice: organisation ${organisationId} not found`);
+
+    let debtor = mock.findDebtorByName(organisationId, input.debtorName);
+    if (!debtor) {
+      debtor = mock.insertDebtor({
+        id: `deb-${nanoid(8)}`,
+        organisationId,
+        name: input.debtorName,
+        mobile: null,
+        email: null,
+        gstin: input.debtorGstin ?? null,
+        address: null,
+        contactVerified: false,
+        totalDue: input.outstandingBalance,
+      });
+    }
+
+    const intakeInput: IntakeInvoiceInput = {
+      debtorName: input.debtorName,
+      debtorGstin: input.debtorGstin ?? null,
+      invoiceNumber: input.invoiceNumber,
+      invoiceDate: input.invoiceDate,
+      taxableValue: input.taxableValue,
+      taxRate: input.taxRate,
+      taxAmount: input.taxAmount,
+      invoiceTotal: input.invoiceTotal,
+      outstandingBalance: input.outstandingBalance,
+    };
+    const { state, transitions } = createDraftCase(input.outstandingBalance, intakeInput);
+
+    const now = new Date().toISOString();
+    const caseId = `case-${nanoid(8)}`;
+    const kase: RecoveryCase = {
+      id: caseId,
+      organisationId,
+      debtorId: debtor.id,
+      status: state.status,
+      automationMode: "assist",
+      waitingOn: state.waitingOn,
+      automationStartedAt: now,
+      currentStep: transitions[transitions.length - 1]?.note ?? "Under validation",
+      blocker: state.blocker,
+      nextScheduledAction: state.nextAction,
+      nextScheduledAt: null,
+      eligibilityRoute: state.eligibilityRoute,
+      principalOutstanding: state.principalOutstanding,
+      recoveredToDate: 0,
+      assigneeId: null,
+      groupKey: null,
+      createdAt: now,
+      activatedAt: null,
+      closedAt: null,
+    };
+    mock.insertCase(kase);
+
+    const invoice: Invoice = {
+      id: `inv-${nanoid(8)}`,
+      caseId,
+      organisationId,
+      debtorId: debtor.id,
+      invoiceNumber: input.invoiceNumber,
+      invoiceDate: input.invoiceDate,
+      dueDate: input.dueDate ?? null,
+      taxableValue: input.taxableValue,
+      taxRate: input.taxRate,
+      taxAmount: input.taxAmount,
+      invoiceTotal: input.invoiceTotal,
+      outstandingBalance: input.outstandingBalance,
+      sourceDocumentId: null,
+      extractionConfidence: null,
+    };
+    mock.insertInvoice(invoice);
+
+    mock.appendAudit({
+      action: "case.created_from_intake",
+      entity: "recovery_case",
+      entityId: caseId,
+      reason: `Draft case created from manual invoice entry -- ${transitions.map((t) => t.note).join("; ")}`,
+    });
+
+    return tick({ case: kase, invoice, debtor });
+  }
+
+  async validateBulkImport(csvText: string) {
+    const known = buildKnownInvoiceKeys();
+    return tick(validateImport(csvText, { knownInvoiceKeys: known }));
+  }
+
+  async commitBulkImport(organisationId: string, csvText: string) {
+    const org = mock.getOrg(organisationId);
+    if (!org) throw new Error(`commitBulkImport: organisation ${organisationId} not found`);
+
+    const known = buildKnownInvoiceKeys();
+    const result = validateImport(csvText, { knownInvoiceKeys: known });
+    const grid = parseCsv(csvText);
+    const header = (grid[0] ?? []).map((h) => h.trim().toLowerCase());
+    const idx = Object.fromEntries(header.map((h, i) => [h, i]));
+
+    let casesCreated = 0;
+    for (const row of result.preview) {
+      const raw = grid[row.rowNumber - 1];
+      if (!raw) continue;
+      const cell = (col: string) => (raw[idx[col]] ?? "").trim();
+      const invoiceDate = parseDate(cell("invoice_date")) ?? new Date().toISOString().slice(0, 10);
+      const dueDate = cell("due_date") ? parseDate(cell("due_date")) : null;
+      const totalDue = parseMoney(cell("total_due")) ?? row.totalDue;
+
+      await this.createCaseFromManualInvoice(organisationId, {
+        debtorName: cell("debtor_name"),
+        debtorGstin: cell("debtor_gstin") || null,
+        invoiceNumber: cell("invoice_number"),
+        invoiceDate,
+        dueDate,
+        taxableValue: parseMoney(cell("taxable_value")) ?? 0,
+        taxRate: Number(cell("tax_rate")) || 0,
+        taxAmount: parseMoney(cell("tax_amount")) ?? 0,
+        invoiceTotal: parseMoney(cell("invoice_total")) ?? totalDue,
+        outstandingBalance: totalDue,
+      });
+      casesCreated++;
+    }
+
+    mock.appendAudit({
+      action: "bulk_import.committed",
+      entity: "organisation",
+      entityId: organisationId,
+      reason: `${casesCreated} draft case(s) created from ${result.validRows} valid row(s) -- ${result.duplicateRows} duplicate, ${result.errorRows} error row(s) skipped (never partially activated)`,
+    });
+
+    return tick({ result, casesCreated });
   }
 
   async recordPayment(input: {

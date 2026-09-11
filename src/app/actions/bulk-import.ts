@@ -1,16 +1,21 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { getRepo } from "@/server/repo";
 import type { ImportResult } from "@/contract/types";
 
-/**
- * Server action behind the intake bulk-import dropzone. Routes through the
- * repository seam like everything else; on the in-memory profile this
- * returns the demo `ImportResult` (src/lib/mock-data.ts stubBulkImport), on
- * the Supabase profile it currently throws with a TODO pointer to
- * src/domain/bulk-import.ts validateImport() -- the real parser is already
- * written and unit-tested, it just isn't reachable from an uploaded file yet.
- */
-export async function runBulkImport(fileName: string): Promise<ImportResult> {
-  return getRepo().bulkImport(fileName);
+/** Validates the uploaded CSV text (row-level errors + duplicate detection). No persistence. */
+export async function validateBulkImportAction(csvText: string): Promise<ImportResult> {
+  return getRepo().validateBulkImport(csvText);
+}
+
+/** Re-validates, then creates a draft case per valid row (PRD §7: never partially activates). */
+export async function commitBulkImportAction(
+  organisationId: string,
+  csvText: string,
+): Promise<{ result: ImportResult; casesCreated: number }> {
+  const result = await getRepo().commitBulkImport(organisationId, csvText);
+  revalidatePath("/cases");
+  revalidatePath("/today");
+  return result;
 }

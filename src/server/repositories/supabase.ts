@@ -433,13 +433,45 @@ export class SupabaseRepository implements Repository {
     };
   }
 
-  async bulkImport(_fileName: string): Promise<ImportResult> {
-    // TODO(api): wire to src/domain/bulk-import.ts validateImport() once
-    // uploaded files are received server-side (Storage + a route handler).
-    throw new Error(
-      "SupabaseRepository.bulkImport: not wired yet -- validateImport() from src/domain/bulk-import.ts " +
-        "is the pure validator; a route handler needs to read the uploaded file and call it.",
+  async createCaseFromManualInvoice(
+    _organisationId: string,
+    _input: import("@/contract/schemas").ManualInvoiceInput,
+  ): Promise<{ case: RecoveryCase; invoice: Invoice; debtor: Debtor }> {
+    // TODO(api): find-or-create the debtor, run src/domain/intake.ts
+    // createDraftCase(), INSERT case + invoice in one transaction, audit it.
+    throw new Error("SupabaseRepository.createCaseFromManualInvoice: not wired yet -- see src/domain/intake.ts");
+  }
+
+  async validateBulkImport(csvText: string): Promise<ImportResult> {
+    // Pure validation needs no case/organisation context -- only the known
+    // (debtor, invoice_number) pairs, fetched as two flat queries (no typed
+    // join support in the hand-written Database type; see types.ts).
+    const supabase = await this.db();
+    const [invoicesRes, debtorsRes] = await Promise.all([
+      supabase.from("invoices").select("*").limit(5000),
+      supabase.from("debtors").select("*"),
+    ]);
+    const invoiceRows: InvoiceRow[] = invoicesRes.data ?? [];
+    const debtorRows: Database["public"]["Tables"]["debtors"]["Row"][] = debtorsRes.data ?? [];
+    const debtorById = new Map(debtorRows.map((d) => [d.id, d]));
+    const known = new Set(
+      invoiceRows.map((inv) => {
+        const debtor = debtorById.get(inv.debtor_id);
+        const key = (debtor?.gstin || debtor?.name || "").toLowerCase();
+        return `${key}::${inv.invoice_number.toLowerCase()}`;
+      }),
     );
+    const { validateImport } = await import("@/domain/bulk-import");
+    return validateImport(csvText, { knownInvoiceKeys: known });
+  }
+
+  async commitBulkImport(
+    _organisationId: string,
+    _csvText: string,
+  ): Promise<{ result: ImportResult; casesCreated: number }> {
+    // TODO(api): validateBulkImport() then createCaseFromManualInvoice() per
+    // valid row, same as MemoryRepository.commitBulkImport.
+    throw new Error("SupabaseRepository.commitBulkImport: not wired yet -- see src/domain/intake.ts");
   }
 
   async recordPayment(_input: {

@@ -57,13 +57,13 @@ export function parseCsv(text: string): string[][] {
   return rows.filter((r) => r.some((v) => v.trim() !== ""));
 }
 
-function parseMoney(raw: string): number | null {
+export function parseMoney(raw: string): number | null {
   const cleaned = raw.replace(/[₹,\s]/g, "");
   if (cleaned === "" || !/^-?\d+(\.\d{1,2})?$/.test(cleaned)) return null;
   return Math.round(parseFloat(cleaned) * 100);
 }
 
-function parseDate(raw: string): string | null {
+export function parseDate(raw: string): string | null {
   const s = raw.trim();
   let m: RegExpMatchArray | null;
   if ((m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/))) return s;

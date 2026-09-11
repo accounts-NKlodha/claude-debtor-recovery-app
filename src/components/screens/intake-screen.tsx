@@ -4,9 +4,10 @@ import * as React from "react";
 import { useForm, type FieldValues } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Upload, FileSpreadsheet, CircleCheck, CircleAlert } from "lucide-react";
-import { manualInvoiceSchema, reminderComposeSchema } from "@/contract/schemas";
-import type { ImportResult } from "@/contract/types";
-import { runBulkImport } from "@/app/actions/bulk-import";
+import { manualInvoiceSchema, reminderComposeSchema, type ManualInvoiceInput } from "@/contract/schemas";
+import type { ImportResult, Organisation } from "@/contract/types";
+import { commitBulkImportAction, validateBulkImportAction } from "@/app/actions/bulk-import";
+import { createCaseFromManualInvoiceAction } from "@/app/actions/manual-invoice";
 import { formatInr } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -118,24 +119,34 @@ function ReminderComposer() {
 
 /* --------------------------------------------------- manual invoice ---- */
 
-function ManualInvoiceForm() {
+function ManualInvoiceForm({ organisationId }: { organisationId: string }) {
   const {
     register,
     handleSubmit,
     reset,
-    formState: { errors, isSubmitSuccessful },
+    formState: { errors },
   } = useForm<FieldValues>({ resolver: zodResolver(manualInvoiceSchema) as never });
+  const [submitting, setSubmitting] = React.useState(false);
+  const [created, setCreated] = React.useState<{ caseId: string; status: string } | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
 
   const err = (k: string) => (errors[k]?.message as string | undefined) ?? undefined;
 
-  return (
-    <form
-      onSubmit={handleSubmit(() => {
-        // TODO(api): POST validated ManualInvoiceInput to the intake endpoint.
+  const onValid = (data: FieldValues) => {
+    setSubmitting(true);
+    setError(null);
+    setCreated(null);
+    createCaseFromManualInvoiceAction(organisationId, data as unknown as ManualInvoiceInput)
+      .then((res) => {
+        setCreated({ caseId: res.case.id, status: res.case.status });
         reset();
-      })}
-      className="grid gap-4 sm:grid-cols-2"
-    >
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to create the draft case"))
+      .finally(() => setSubmitting(false));
+  };
+
+  return (
+    <form onSubmit={handleSubmit(onValid)} className="grid gap-4 sm:grid-cols-2">
       <Field id="mi-invoiceNumber" label="Invoice number" error={err("invoiceNumber")}>
         <Input id="mi-invoiceNumber" {...register("invoiceNumber")} />
       </Field>
@@ -166,11 +177,19 @@ function ManualInvoiceForm() {
       <Field id="mi-debtorGstin" label="Debtor GSTIN (optional)" error={err("debtorGstin")}>
         <Input id="mi-debtorGstin" className="font-mono" {...register("debtorGstin")} />
       </Field>
-      <div className="col-span-full flex items-center gap-3">
-        <Button type="submit">Add invoice to draft case</Button>
-        {isSubmitSuccessful ? (
+      <div className="col-span-full flex flex-wrap items-center gap-3">
+        <Button type="submit" disabled={submitting}>
+          {submitting ? "Creating…" : "Add invoice to draft case"}
+        </Button>
+        {created ? (
           <span className="inline-flex items-center gap-1 text-xs text-success">
-            <CircleCheck className="h-3.5 w-3.5" /> Added to draft — not yet activated
+            <CircleCheck className="h-3.5 w-3.5" /> Draft case {created.caseId} created — status &quot;
+            {created.status}&quot;, not yet activated
+          </span>
+        ) : null}
+        {error ? (
+          <span className="inline-flex items-center gap-1 text-xs text-danger" role="alert">
+            <CircleAlert className="h-3.5 w-3.5" /> {error}
           </span>
         ) : null}
       </div>
@@ -180,22 +199,43 @@ function ManualInvoiceForm() {
 
 /* ------------------------------------------------------ bulk import ---- */
 
-function BulkImport() {
+function BulkImport({ organisationId }: { organisationId: string }) {
   const [result, setResult] = React.useState<ImportResult | null>(null);
+  const [csvText, setCsvText] = React.useState<string | null>(null);
   const [fileName, setFileName] = React.useState<string | null>(null);
   const [dragOver, setDragOver] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   const [pending, setPending] = React.useState(false);
+  const [committing, setCommitting] = React.useState(false);
+  const [committed, setCommitted] = React.useState<number | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
 
   const handleFile = (file: File | undefined) => {
     if (!file) return;
     setFileName(file.name);
+    setCommitted(null);
+    setError(null);
     setPending(true);
-    // TODO(api): upload the file content, not just its name, once Storage is wired.
-    runBulkImport(file.name)
+    file
+      .text()
+      .then((text) => {
+        setCsvText(text);
+        return validateBulkImportAction(text);
+      })
       .then(setResult)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to validate the file"))
       .finally(() => setPending(false));
+  };
+
+  const commit = () => {
+    if (!csvText) return;
+    setCommitting(true);
+    setError(null);
+    commitBulkImportAction(organisationId, csvText)
+      .then((res) => setCommitted(res.casesCreated))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to commit the import"))
+      .finally(() => setCommitting(false));
   };
 
   return (
@@ -234,6 +274,11 @@ function BulkImport() {
         {fileName ? (
           <p className="text-xs text-muted-foreground">
             {pending ? `Validating ${fileName}…` : `Loaded: ${fileName}`}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="flex items-center gap-1.5 text-xs text-danger" role="alert">
+            <CircleAlert className="h-3.5 w-3.5" /> {error}
           </p>
         ) : null}
       </div>
@@ -319,8 +364,23 @@ function BulkImport() {
                   ))}
                 </TableBody>
               </Table>
-              <div className="mt-3">
-                <Button>Commit {result.validRows} valid rows</Button>
+              <div className="mt-3 flex items-center gap-3">
+                <Button
+                  onClick={commit}
+                  disabled={result.validRows === 0 || committing || committed !== null}
+                >
+                  {committing
+                    ? "Committing…"
+                    : committed !== null
+                      ? "Committed"
+                      : `Commit ${result.validRows} valid rows`}
+                </Button>
+                {committed !== null ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-success">
+                    <CircleCheck className="h-3.5 w-3.5" /> {committed} draft case
+                    {committed === 1 ? "" : "s"} created — see Cases
+                  </span>
+                ) : null}
               </div>
             </CardContent>
           </Card>
@@ -332,43 +392,65 @@ function BulkImport() {
 
 /* ------------------------------------------------------------ screen ---- */
 
-export function IntakeScreen() {
+export function IntakeScreen({ organisations }: { organisations: Organisation[] }) {
+  const [organisationId, setOrganisationId] = React.useState(organisations[0]?.id ?? "");
+
   return (
-    <Tabs defaultValue="reminder">
-      <TabsList>
-        <TabsTrigger value="reminder">Reminder composer</TabsTrigger>
-        <TabsTrigger value="manual">Manual invoice</TabsTrigger>
-        <TabsTrigger value="bulk">
-          <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" /> Bulk CSV
-        </TabsTrigger>
-      </TabsList>
-      <TabsContent value="reminder">
-        <Card>
-          <CardHeader>
-            <CardTitle>Compose a reminder</CardTitle>
-            <CardDescription>
-              Scheduled outbound only at 11:00 AM IST, never on Sunday.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <ReminderComposer />
-          </CardContent>
-        </Card>
-      </TabsContent>
-      <TabsContent value="manual">
-        <Card>
-          <CardHeader>
-            <CardTitle>Manual invoice entry</CardTitle>
-            <CardDescription>Validated with the shared manualInvoiceSchema.</CardDescription>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <ManualInvoiceForm />
-          </CardContent>
-        </Card>
-      </TabsContent>
-      <TabsContent value="bulk">
-        <BulkImport />
-      </TabsContent>
-    </Tabs>
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-2">
+        <Label htmlFor="intake-org" className="text-xs text-muted-foreground">
+          Client
+        </Label>
+        <select
+          id="intake-org"
+          value={organisationId}
+          onChange={(e) => setOrganisationId(e.target.value)}
+          className="h-8 rounded-md border border-input bg-card px-2 text-sm"
+        >
+          {organisations.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.legalEntityName}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <Tabs defaultValue="reminder">
+        <TabsList>
+          <TabsTrigger value="reminder">Reminder composer</TabsTrigger>
+          <TabsTrigger value="manual">Manual invoice</TabsTrigger>
+          <TabsTrigger value="bulk">
+            <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" /> Bulk CSV
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="reminder">
+          <Card>
+            <CardHeader>
+              <CardTitle>Compose a reminder</CardTitle>
+              <CardDescription>
+                Scheduled outbound only at 11:00 AM IST, never on Sunday.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <ReminderComposer />
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="manual">
+          <Card>
+            <CardHeader>
+              <CardTitle>Manual invoice entry</CardTitle>
+              <CardDescription>Validated with the shared manualInvoiceSchema.</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <ManualInvoiceForm organisationId={organisationId} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="bulk">
+          <BulkImport organisationId={organisationId} />
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }

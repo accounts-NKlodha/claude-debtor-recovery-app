@@ -1071,6 +1071,28 @@ export function mutateInvoice(id: string, patch: Partial<Invoice>) {
   INVOICES[idx] = { ...INVOICES[idx], ...patch };
 }
 
+export function insertInvoice(invoice: Invoice) {
+  INVOICES.push(invoice);
+  return invoice;
+}
+
+export function insertCase(kase: RecoveryCase) {
+  CASES.push(kase);
+  return kase;
+}
+
+/** Case-insensitive lookup within one organisation; used by intake to avoid
+ * creating duplicate debtor records for the same name. */
+export function findDebtorByName(organisationId: string, name: string) {
+  const needle = name.trim().toLowerCase();
+  return DEBTORS.find((d) => d.organisationId === organisationId && d.name.trim().toLowerCase() === needle);
+}
+
+export function insertDebtor(debtor: Debtor) {
+  DEBTORS.push(debtor);
+  return debtor;
+}
+
 export function markPaymentConfirmed(id: string) {
   const idx = PAYMENTS.findIndex((p) => p.id === id);
   if (idx === -1) throw new Error(`markPaymentConfirmed: payment ${id} not found`);

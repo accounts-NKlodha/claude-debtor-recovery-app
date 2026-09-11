@@ -83,8 +83,24 @@ export interface Repository {
   stageFunnel(): Promise<StagePoint[]>;
   clientOverview(orgId: string): Promise<ClientOverview>;
 
-  // -- intake -------------------------------------------------------------
-  bulkImport(fileName: string): Promise<ImportResult>;
+  // -- intake ---------------------------------------------------------------
+  /**
+   * Create a draft case from one manually entered invoice (PRD §5/§7,
+   * acceptance scenarios 0/14): starts preparation automatically
+   * (accept -> deterministic checks) but never activates the case --
+   * activation still needs certification/validation/age-gate.
+   */
+  createCaseFromManualInvoice(
+    organisationId: string,
+    input: import("@/contract/schemas").ManualInvoiceInput,
+  ): Promise<{ case: RecoveryCase; invoice: Invoice; debtor: Debtor }>;
+  /** Validates a bulk-import CSV against the contract without persisting anything. */
+  validateBulkImport(csvText: string): Promise<ImportResult>;
+  /** Re-validates, then creates a draft case per valid row (never partial-activates). */
+  commitBulkImport(
+    organisationId: string,
+    csvText: string,
+  ): Promise<{ result: ImportResult; casesCreated: number }>;
 
   // -- mutations ------------------------------------------------------------
   /**
