@@ -8,10 +8,20 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { LinkButton } from "@/components/ui/link-button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ChipFilterRow, type ChipOption } from "@/components/ui/chip-filter";
 
 export interface CommRow extends Communication {
   clientName: string;
   debtorName: string;
+}
+
+type QuickFilter = "all" | "review" | "failed";
+
+function needsReview(r: CommRow) {
+  return r.direction === "inbound" && !r.reviewedById;
+}
+function isFailure(r: CommRow) {
+  return r.deliveryStatus === "failed" || r.deliveryStatus === "bounced";
 }
 
 function Select({
@@ -51,6 +61,7 @@ export function CommsLog({
   rows: CommRow[];
   initialCase?: string;
 }) {
+  const [quickFilter, setQuickFilter] = React.useState<QuickFilter>("all");
   const [channel, setChannel] = React.useState("");
   const [direction, setDirection] = React.useState("");
   const [status, setStatus] = React.useState("");
@@ -58,11 +69,18 @@ export function CommsLog({
     initialCase ? (rows.find((r) => r.caseId === initialCase)?.threadRef ?? null) : null,
   );
 
+  const quickOptions: ChipOption<QuickFilter>[] = [
+    { value: "all", label: "All messages", count: rows.length },
+    { value: "review", label: "Needs human review", count: rows.filter(needsReview).length },
+    { value: "failed", label: "Delivery failures", count: rows.filter(isFailure).length },
+  ];
+
   const filtered = rows.filter(
     (r) =>
       (!channel || r.channel === channel) &&
       (!direction || r.direction === direction) &&
-      (!status || r.deliveryStatus === status),
+      (!status || r.deliveryStatus === status) &&
+      (quickFilter === "all" || (quickFilter === "review" ? needsReview(r) : isFailure(r))),
   );
 
   const threads = Array.from(
@@ -82,6 +100,12 @@ export function CommsLog({
 
   return (
     <div className="flex flex-col gap-4">
+      <ChipFilterRow
+        aria-label="Quick-filter communications"
+        options={quickOptions}
+        value={quickFilter}
+        onChange={setQuickFilter}
+      />
       <div className="flex flex-wrap gap-3">
         <Select label="Channel" value={channel} onChange={setChannel} options={CHANNEL} />
         <Select
