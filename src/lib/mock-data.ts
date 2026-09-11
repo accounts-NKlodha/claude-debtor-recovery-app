@@ -1106,6 +1106,16 @@ export function insertDebtor(debtor: Debtor) {
   return debtor;
 }
 
+export function findOrgByClientCode(clientCode: string) {
+  const needle = clientCode.trim().toLowerCase();
+  return ORGANISATIONS.find((o) => o.clientCode.trim().toLowerCase() === needle);
+}
+
+export function insertOrganisation(org: Organisation) {
+  ORGANISATIONS.push(org);
+  return org;
+}
+
 export function markPaymentConfirmed(id: string) {
   const idx = PAYMENTS.findIndex((p) => p.id === id);
   if (idx === -1) throw new Error(`markPaymentConfirmed: payment ${id} not found`);

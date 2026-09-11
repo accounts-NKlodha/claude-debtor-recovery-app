@@ -53,6 +53,28 @@ export class MemoryRepository implements Repository {
   async listOrganisations() {
     return tick([...mock.ORGANISATIONS]);
   }
+
+  async createOrganisation(input: import("@/contract/schemas").CreateOrganisationInput) {
+    if (mock.findOrgByClientCode(input.clientCode)) {
+      throw new Error(`createOrganisation: client code "${input.clientCode}" is already in use`);
+    }
+    const organisation = mock.insertOrganisation({
+      id: `org-${nanoid(8)}`,
+      clientCode: input.clientCode,
+      legalEntityName: input.legalEntityName,
+      creditorGstin: input.creditorGstin ?? null,
+      udyamNumber: input.udyamNumber ?? null,
+      jitoMember: input.jitoMember,
+      createdAt: new Date().toISOString(),
+    });
+    mock.appendAudit({
+      action: "organisation.created",
+      entity: "organisation",
+      entityId: organisation.id,
+      reason: `New client onboarded: ${organisation.legalEntityName} (${organisation.clientCode})`,
+    });
+    return tick({ organisation });
+  }
   async getDebtor(id: string) {
     return tick(mock.getDebtor(id));
   }

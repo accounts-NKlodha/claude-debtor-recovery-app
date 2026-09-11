@@ -191,6 +191,33 @@ export class SupabaseRepository implements Repository {
     return unwrap(res, "listOrganisations").map(toOrganisation);
   }
 
+  async createOrganisation(
+    input: import("@/contract/schemas").CreateOrganisationInput,
+  ): Promise<{ organisation: Organisation }> {
+    const supabase = await this.db();
+    // The hand-written Database type (src/lib/supabase/types.ts) doesn't
+    // carry enough generic plumbing for .insert()'s overload resolution --
+    // this is the first write call in this file. `as never` bypasses it for
+    // this one call; the row shape is still checked against OrganisationRow.
+    const row: Database["public"]["Tables"]["organisations"]["Insert"] = {
+      client_code: input.clientCode,
+      legal_entity_name: input.legalEntityName,
+      creditor_gstin: input.creditorGstin ?? null,
+      udyam_number: input.udyamNumber ?? null,
+      jito_member: input.jitoMember,
+    };
+    const { data, error } = await supabase
+      .from("organisations")
+      .insert(row as never)
+      .select("*")
+      .single();
+    if (error) throw new Error(`SupabaseRepository.createOrganisation: ${error.message}`);
+    // TODO(api): write the audit_events row through the privileged audit
+    // writer once it exists (see docs/PLAN.md M10 hash-chaining follow-up) --
+    // do not let a client insert its own audit row (audit P1-4).
+    return { organisation: toOrganisation(data) };
+  }
+
   async getDebtor(id: string) {
     const supabase = await this.db();
     const { data, error } = await supabase.from("debtors").select("*").eq("id", id).maybeSingle();

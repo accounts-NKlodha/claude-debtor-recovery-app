@@ -9,6 +9,13 @@ export const gstinSchema = z
   .string()
   .regex(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/, "invalid GSTIN");
 
+/** An optional GSTIN field left blank in a form submits "" -- treat that as
+ * absent rather than failing the GSTIN regex (found via live testing). */
+export const optionalGstinSchema = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  gstinSchema.nullable().optional(),
+);
+
 export const indianMobileSchema = z
   .string()
   .transform((s) => s.replace(/[\s-]/g, ""))
@@ -57,7 +64,7 @@ export const manualInvoiceSchema = z.object({
   invoiceTotal: moneyToPaise,
   outstandingBalance: moneyToPaise,
   debtorName: z.string().min(1),
-  debtorGstin: gstinSchema.nullable().optional(),
+  debtorGstin: optionalGstinSchema,
 });
 export type ManualInvoiceInput = z.infer<typeof manualInvoiceSchema>;
 
@@ -65,10 +72,25 @@ export const debtorSchema = z.object({
   name: z.string().min(1),
   mobile: indianMobileSchema.nullable().optional(),
   email: z.string().email().nullable().optional(),
-  gstin: gstinSchema.nullable().optional(),
+  gstin: optionalGstinSchema,
   address: z.string().nullable().optional(),
   totalDue: moneyToPaise,
 });
+
+/** Onboarding a new client organisation (PRD §4 tenancy). */
+export const createOrganisationSchema = z.object({
+  clientCode: z
+    .string()
+    .trim()
+    .min(2, "Client code is required")
+    .max(20)
+    .regex(/^[A-Za-z0-9-]+$/, "Letters, digits and hyphens only"),
+  legalEntityName: z.string().trim().min(2, "Legal entity name is required"),
+  creditorGstin: optionalGstinSchema,
+  udyamNumber: z.string().trim().nullable().optional(),
+  jitoMember: z.boolean().default(false),
+});
+export type CreateOrganisationInput = z.infer<typeof createOrganisationSchema>;
 
 export const BULK_IMPORT_COLUMNS = [
   "client_code",

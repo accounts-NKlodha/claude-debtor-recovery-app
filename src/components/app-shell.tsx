@@ -40,6 +40,7 @@ type Surface = "internal" | "client";
 type NavItem = { href: string; label: string; Icon: React.ComponentType<{ className?: string }> };
 
 const INTERNAL_NAV: NavItem[] = [
+  { href: "/dashboard", label: "Dashboard", Icon: LayoutDashboard },
   { href: "/today", label: "Today / Urgent", Icon: CalendarClock },
   { href: "/cases", label: "Cases", Icon: FolderKanban },
   { href: "/intake", label: "Intake / OCR", Icon: ScanText },
@@ -156,7 +157,7 @@ export function AppShell({
           {collapsed ? <PanelLeft className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
         </Button>
 
-        <Link href={surface === "internal" ? "/today" : "/client"} className="flex items-center gap-2">
+        <Link href={surface === "internal" ? "/dashboard" : "/client"} className="flex items-center gap-2">
           <span className="grid h-6 w-6 place-items-center rounded-md bg-primary text-xs font-bold text-primary-foreground">
             D
           </span>

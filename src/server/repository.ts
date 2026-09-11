@@ -55,6 +55,10 @@ export interface Repository {
   // -- reference data ------------------------------------------------------
   getOrg(id: string): Promise<Organisation | undefined>;
   listOrganisations(): Promise<Organisation[]>;
+  /** Onboard a new client organisation. Rejects a duplicate client code. */
+  createOrganisation(
+    input: import("@/contract/schemas").CreateOrganisationInput,
+  ): Promise<{ organisation: Organisation }>;
   getDebtor(id: string): Promise<Debtor | undefined>;
   assigneeName(id: string | null): Promise<string>;
 
