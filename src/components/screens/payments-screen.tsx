@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { ChipFilterRow, type ChipOption } from "@/components/ui/chip-filter";
 import {
   Table,
   TableBody,
@@ -42,6 +43,17 @@ export function PaymentsScreen({ rows: initial }: { rows: PaymentRow[] }) {
   const [confirmNow, setConfirmNow] = React.useState(false);
   const [amountError, setAmountError] = React.useState<string | null>(null);
   const [pendingId, setPendingId] = React.useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = React.useState<"all" | "unconfirmed" | "confirmed">("all");
+
+  const unconfirmedTotal = rows.filter((r) => !r.clientConfirmed).reduce((s, r) => s + r.amount, 0);
+  const confirmedTotal = rows.filter((r) => r.clientConfirmed).reduce((s, r) => s + r.amount, 0);
+  const filterOptions: ChipOption<typeof statusFilter>[] = [
+    { value: "all", label: "All receipts", count: rows.length },
+    { value: "unconfirmed", label: "Awaiting confirmation", count: rows.filter((r) => !r.clientConfirmed).length },
+    { value: "confirmed", label: "Confirmed", count: rows.filter((r) => r.clientConfirmed).length },
+  ];
+  const filteredRows =
+    statusFilter === "all" ? rows : rows.filter((r) => (statusFilter === "confirmed") === r.clientConfirmed);
 
   const confirm = (row: PaymentRow) => {
     setPendingId(row.id);
@@ -80,6 +92,28 @@ export function PaymentsScreen({ rows: initial }: { rows: PaymentRow[] }) {
   };
 
   return (
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-xl font-semibold tabular-nums">{formatInr(unconfirmedTotal)}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">Awaiting confirmation</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-xl font-semibold tabular-nums">{formatInr(confirmedTotal)}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">Confirmed this view</p>
+          </CardContent>
+        </Card>
+        <Card className="hidden sm:block">
+          <CardContent className="p-4">
+            <p className="text-xl font-semibold tabular-nums">{rows.length}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">Total receipts recorded</p>
+          </CardContent>
+        </Card>
+      </div>
+      <ChipFilterRow aria-label="Filter receipts" options={filterOptions} value={statusFilter} onChange={setStatusFilter} />
     <div className="grid gap-6 lg:grid-cols-[340px_1fr]">
       <Card className="lg:sticky lg:top-20 lg:self-start">
         <CardHeader>
@@ -158,7 +192,7 @@ export function PaymentsScreen({ rows: initial }: { rows: PaymentRow[] }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((p) => (
+            {filteredRows.map((p) => (
               <TableRow key={p.id}>
                 <TableCell>
                   <span className="font-medium">{p.debtorName}</span>
@@ -191,6 +225,7 @@ export function PaymentsScreen({ rows: initial }: { rows: PaymentRow[] }) {
           </TableBody>
         </Table>
       </div>
+    </div>
     </div>
   );
 }
