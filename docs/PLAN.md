@@ -31,7 +31,7 @@ tasks share no files; shared-contract edits are serialized.
 - [x] 2.6a **M5 Communications — initial send**: send via adapter + `runAdapter`, unified log UI. Live-tested end-to-end (active → sent → delivered → 24h timer, or both-channels-failed → contact_update_required) `[gate]`
 - [ ] 2.6b **M5 Communications — remaining**: real delivery webhooks (currently simulated immediately, no live provider), reply classify + staff review queue UI. Tests: scenario 6
 - [x] 2.7 **M6 GST**: compose form with live field-limit counters, pack prepare, assisted-session + human-confirm + capture, drift → urgent task (drift path unit-tested via run-adapter.test.ts; happy path live-tested end-to-end). Tests: scenarios 8,9 `[gate]`
-- [ ] 2.8 **M7 MSME**: seven-stage wizard, save/resume, immutable preview snapshot. Test: scenario 10 `[gate]`
+- [x] 2.8 **M7 MSME**: seven-stage wizard, save/resume, immutable preview snapshot. Test: scenario 10 `[gate]` — live-tested end-to-end including a workflow.ts bug fix found via live testing (stale blocker/waiting-on on the filed transition)
 - [ ] 2.9 **M8 DD/Hearings**: DD task + evidence upload, hearing → calendar event. Test: scenario 11 `[gate]`
 - [ ] 2.10 **M10 Security**: audit-event helper + hash chain on every mutation, secure expiring links, backup/restore runbook. Test: scenario 13 `[gate]`
 
