@@ -1,4 +1,5 @@
 import { PageHeader } from "@/components/ui/page-header";
+import { LinkButton } from "@/components/ui/link-button";
 import { CasesTable } from "@/components/screens/cases-table";
 import { getRepo } from "@/server/repo";
 
@@ -11,7 +12,8 @@ export default async function CasesPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Cases"
-        description="Every recovery case across clients. Sort and filter to triage; click a row for the full case."
+        description="Authorized cases stay separate by client and legal entity. Sort and filter to triage; click a row for the full case."
+        actions={<LinkButton href="/intake" variant="primary">+ New intake</LinkButton>}
       />
       <CasesTable rows={rows} />
     </div>

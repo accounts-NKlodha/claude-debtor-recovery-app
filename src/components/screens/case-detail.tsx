@@ -26,6 +26,7 @@ import { StatusPill, WaitingOnPill } from "@/components/ui/status-pill";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { LinkButton } from "@/components/ui/link-button";
+import { SpotlightCard } from "@/components/ui/spotlight-card";
 import { SendReminderButton } from "./send-reminder-button";
 import { DdHearingActions } from "./dd-hearing-actions";
 import { OcrReviewPanel } from "./ocr-review-panel";
@@ -64,14 +65,15 @@ export function CaseDetail({ vm }: { vm: CaseDetailVM }) {
     <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
       <div className="flex min-w-0 flex-col gap-6">
         <div className="flex flex-col gap-3 border-b border-border pb-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Case {kase.id} &middot; {vm.clientName}
+          </p>
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-lg font-semibold tracking-tight">{vm.debtorName}</h1>
+            <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{vm.debtorName}</h1>
             <StatusPill status={kase.status} />
             <WaitingOnPill value={kase.waitingOn} />
           </div>
-          <p className="text-sm text-muted-foreground">
-            {vm.clientName} &middot; Case {kase.id} &middot; Assignee {vm.assignee}
-          </p>
+          <p className="text-sm text-muted-foreground">Assignee {vm.assignee}</p>
           <div className="grid gap-x-6 sm:grid-cols-3">
             <Row label="Automation started">{fmtDate(kase.automationStartedAt)}</Row>
             <Row label="Current step">{kase.currentStep}</Row>
@@ -275,7 +277,17 @@ export function CaseDetail({ vm }: { vm: CaseDetailVM }) {
       </div>
 
       {/* Automation state panel */}
-      <aside className="lg:sticky lg:top-20 lg:self-start">
+      <aside className="flex flex-col gap-4 lg:sticky lg:top-20 lg:self-start">
+        {kase.nextScheduledAction ? (
+          <SpotlightCard
+            eyebrow="Next safe action"
+            title={kase.nextScheduledAction}
+            description={
+              kase.blocker ??
+              (kase.nextScheduledAt ? `Scheduled ${fmtDate(kase.nextScheduledAt)}` : undefined)
+            }
+          />
+        ) : null}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">

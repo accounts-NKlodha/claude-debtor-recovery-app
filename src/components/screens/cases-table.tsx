@@ -27,6 +27,16 @@ import {
 } from "@/components/ui/table";
 import { StatusPill, WaitingOnPill } from "@/components/ui/status-pill";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ChipFilterRow, type ChipOption } from "@/components/ui/chip-filter";
+
+const BLOCKED_STATUSES: CaseStatus[] = [
+  "correction_required",
+  "contact_update_required",
+  "dispute_settlement",
+  "automation_failed",
+];
+
+type QuickFilter = "all" | "urgent" | "blocked" | "client" | "portal";
 
 const col = legacyCreateColumnHelper<CaseRow>();
 
@@ -83,13 +93,37 @@ export function CasesTable({ rows }: { rows: CaseRow[] }) {
   const router = useRouter();
   const [globalFilter, setGlobalFilter] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<"" | CaseStatus>("");
+  const [quickFilter, setQuickFilter] = React.useState<QuickFilter>("all");
   const [sorting, setSorting] = React.useState<{ id: string; desc: boolean }[]>([
     { id: "overdueDays", desc: true },
   ]);
 
+  const quickFiltered = React.useMemo(() => {
+    switch (quickFilter) {
+      case "urgent":
+        return rows.filter((r) => r.overdueDays > 30);
+      case "blocked":
+        return rows.filter((r) => BLOCKED_STATUSES.includes(r.status));
+      case "client":
+        return rows.filter((r) => r.waitingOn === "client");
+      case "portal":
+        return rows.filter((r) => r.waitingOn === "portal");
+      default:
+        return rows;
+    }
+  }, [rows, quickFilter]);
+
+  const quickOptions: ChipOption<QuickFilter>[] = [
+    { value: "all", label: "All active", count: rows.length },
+    { value: "urgent", label: "Urgent", count: rows.filter((r) => r.overdueDays > 30).length },
+    { value: "blocked", label: "Blocked", count: rows.filter((r) => BLOCKED_STATUSES.includes(r.status)).length },
+    { value: "client", label: "Waiting on client", count: rows.filter((r) => r.waitingOn === "client").length },
+    { value: "portal", label: "Waiting on portal", count: rows.filter((r) => r.waitingOn === "portal").length },
+  ];
+
   const data = React.useMemo(
-    () => (statusFilter ? rows.filter((r) => r.status === statusFilter) : rows),
-    [rows, statusFilter],
+    () => (statusFilter ? quickFiltered.filter((r) => r.status === statusFilter) : quickFiltered),
+    [quickFiltered, statusFilter],
   );
 
   const table = useLegacyTable<CaseRow>({
@@ -108,6 +142,12 @@ export function CasesTable({ rows }: { rows: CaseRow[] }) {
 
   return (
     <div className="flex flex-col gap-3">
+      <ChipFilterRow
+        aria-label="Quick-filter cases"
+        options={quickOptions}
+        value={quickFilter}
+        onChange={setQuickFilter}
+      />
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <div className="relative w-full sm:w-72">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />

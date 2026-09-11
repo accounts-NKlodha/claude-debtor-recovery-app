@@ -3,11 +3,12 @@
 import * as React from "react";
 import { ArrowRight, Clock, TriangleAlert } from "lucide-react";
 import type { QueueItem } from "@/lib/mock-data";
-import { cn, formatInr } from "@/lib/utils";
+import { formatInr } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { LinkButton } from "@/components/ui/link-button";
 import { WaitingOnPill } from "@/components/ui/status-pill";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ChipFilterRow, type ChipOption } from "@/components/ui/chip-filter";
 
 const DUE_META: Record<QueueItem["dueState"], { label: string; tone: "danger" | "warning" | "info" | "neutral" }> = {
   overdue: { label: "Overdue", tone: "danger" },
@@ -16,32 +17,32 @@ const DUE_META: Record<QueueItem["dueState"], { label: string; tone: "danger" | 
   none: { label: "No due date", tone: "neutral" },
 };
 
-const FILTERS = ["all", "staff", "client", "portal", "system"] as const;
+type FilterKey = "all" | "urgent" | "staff" | "client" | "portal" | "system";
 
 export function TodayQueue({ items }: { items: QueueItem[] }) {
-  const [filter, setFilter] = React.useState<(typeof FILTERS)[number]>("all");
-  const shown = filter === "all" ? items : items.filter((i) => i.waitingOn === filter);
+  const [filter, setFilter] = React.useState<FilterKey>("all");
+
+  const options: ChipOption<FilterKey>[] = [
+    { value: "all", label: "All", count: items.length },
+    { value: "urgent", label: "Urgent", count: items.filter((i) => i.urgent).length },
+    { value: "staff", label: "Waiting on staff", count: items.filter((i) => i.waitingOn === "staff").length },
+    { value: "client", label: "Waiting on client", count: items.filter((i) => i.waitingOn === "client").length },
+    { value: "portal", label: "Waiting on portal", count: items.filter((i) => i.waitingOn === "portal").length },
+  ];
+
+  const shown =
+    filter === "all"
+      ? items
+      : filter === "urgent"
+        ? items.filter((i) => i.urgent)
+        : items.filter((i) => i.waitingOn === filter);
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-1.5">
-        {FILTERS.map((f) => (
-          <button
-            key={f}
-            type="button"
-            onClick={() => setFilter(f)}
-            aria-pressed={filter === f}
-            className={cn(
-              "rounded-md border px-2.5 py-1 text-xs font-medium capitalize transition-colors focus-visible:outline-2 focus-visible:outline-ring",
-              filter === f
-                ? "border-transparent bg-accent text-accent-foreground"
-                : "border-border text-muted-foreground hover:bg-muted",
-            )}
-          >
-            {f === "all" ? "All" : `Waiting on ${f}`}
-          </button>
-        ))}
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold tracking-tight">Priority work</h2>
       </div>
+      <ChipFilterRow aria-label="Filter priority work" options={options} value={filter} onChange={setFilter} />
 
       {shown.length === 0 ? (
         <EmptyState
@@ -50,13 +51,19 @@ export function TodayQueue({ items }: { items: QueueItem[] }) {
         />
       ) : (
         <ol className="flex flex-col gap-2">
-          {shown.map((item) => {
+          {shown.map((item, i) => {
             const due = DUE_META[item.dueState];
             return (
               <li
                 key={item.taskId}
                 className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 sm:flex-row sm:items-center"
               >
+                <span
+                  aria-hidden
+                  className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold tabular-nums sm:flex"
+                >
+                  {i + 1}
+                </span>
                 <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                   <div className="flex flex-wrap items-center gap-2">
                     {item.urgent && (

@@ -1,8 +1,11 @@
+import { TriangleAlert } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent } from "@/components/ui/card";
+import { LinkButton } from "@/components/ui/link-button";
+import { SpotlightCard } from "@/components/ui/spotlight-card";
 import { TodayQueue } from "@/components/screens/today-queue";
 import { getRepo } from "@/server/repo";
-import { formatInrCompact } from "@/lib/utils";
+import { formatInr, formatInrCompact } from "@/lib/utils";
 
 export const metadata = { title: "Today / Urgent — Debtrecover" };
 
@@ -11,34 +14,81 @@ export default async function TodayPage() {
   const repo = getRepo();
   const [queue, k] = await Promise.all([repo.urgentQueue(), repo.dashboardKpis()]);
 
+  const today = new Date().toLocaleDateString("en-IN", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    timeZone: "Asia/Kolkata",
+  });
+  const urgentCount = queue.filter((i) => i.urgent).length;
+  const urgentAmount = queue.filter((i) => i.urgent).reduce((s, i) => s + i.amountAtRisk, 0);
+  const top = queue[0];
+
   const tiles = [
-    { label: "Open cases", value: String(k.openCases) },
     { label: "Under recovery", value: formatInrCompact(k.amountUnderRecovery) },
-    { label: "Recovered (confirmed)", value: formatInrCompact(k.recoveredThisMonth) },
-    { label: "Urgent tasks", value: String(k.urgentTasks) },
+    { label: "Due today", value: String(k.urgentTasks) },
+    { label: "Open cases", value: String(k.openCases) },
     { label: "Awaiting client", value: String(k.awaitingClient) },
-    { label: "Portal runs", value: String(k.portalRuns) },
   ];
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Today / Urgent"
-        description="Exception-first queue. Every row is the smallest safe next action for a blocked case — highest amount at risk and closest deadline first."
+        eyebrow={today.toUpperCase() + " · IST"}
+        title="Good morning"
+        description="Start with blocked recoveries and time-sensitive confirmations."
+        size="hero"
+        actions={<LinkButton href="/intake" variant="primary">+ New intake</LinkButton>}
       />
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      {urgentCount > 0 ? (
+        <div className="flex items-start gap-3 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3 text-danger">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold">
+              {urgentCount} urgent action{urgentCount === 1 ? "" : "s"} need attention
+            </p>
+            <p className="text-xs opacity-90">
+              Holding {formatInr(urgentAmount)} across cases waiting on staff or client.
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {tiles.map((t) => (
           <Card key={t.label}>
-            <CardContent className="p-3">
-              <p className="text-[11px] text-muted-foreground">{t.label}</p>
-              <p className="mt-1 text-lg font-semibold tabular-nums">{t.value}</p>
+            <CardContent className="p-4">
+              <p className="text-2xl font-semibold tabular-nums">{t.value}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{t.label}</p>
             </CardContent>
           </Card>
         ))}
       </div>
 
-      <TodayQueue items={queue} />
+      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+        <TodayQueue items={queue} />
+        {top ? (
+          <SpotlightCard
+            eyebrow="Next best action"
+            title={top.nextSafeAction}
+            description={
+              <>
+                {top.client}
+                {top.debtor ? <> &middot; {top.debtor}</> : null}
+                {top.blocker ? <> — {top.blocker}</> : null}
+              </>
+            }
+            action={
+              top.caseId ? (
+                <LinkButton href={`/cases/${top.caseId}`} variant="primary">
+                  Open case
+                </LinkButton>
+              ) : null
+            }
+          />
+        ) : null}
+      </div>
     </div>
   );
 }
