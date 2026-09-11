@@ -28,7 +28,8 @@ tasks share no files; shared-contract edits are serialized.
 - [ ] 2.3 **M2 Intake**: manual invoice form (zod), bulk CSV import → `ImportResult` report UI, OCR review screen with provenance. Tests: scenarios 0,1,2 `[gate]`
 - [ ] 2.4 **M3 Workflow API**: persist `orchestration_runs`/`step_attempts`, wire `advance()` to a job runner (pg-boss-style interface, in-memory impl for pilot), timer scheduling. Tests: scenarios 3,4,14,15,16 `[gate]`
 - [x] 2.5 **M4 Payments**: record payment + `allocateRecovery` persistence, client-confirm toggle → cancel escalation. Test: scenario 7 `[gate]` — end-to-end through `/payments` → `applyConfirmedPayment` → `advance()`, live-tested in browser (not just unit tests)
-- [ ] 2.6 **M5 Communications**: send via adapter + `runAdapter`, delivery webhooks, unified log UI, reply classify + staff review queue. Tests: scenarios 5,6 `[gate]`
+- [x] 2.6a **M5 Communications — initial send**: send via adapter + `runAdapter`, unified log UI. Live-tested end-to-end (active → sent → delivered → 24h timer, or both-channels-failed → contact_update_required) `[gate]`
+- [ ] 2.6b **M5 Communications — remaining**: real delivery webhooks (currently simulated immediately, no live provider), reply classify + staff review queue UI. Tests: scenario 6
 - [ ] 2.7 **M6 GST**: compose form with live field-limit counters, pack prepare, assisted-session + human-confirm + capture, drift → urgent task. Tests: scenarios 8,9 `[gate]`
 - [ ] 2.8 **M7 MSME**: seven-stage wizard, save/resume, immutable preview snapshot. Test: scenario 10 `[gate]`
 - [ ] 2.9 **M8 DD/Hearings**: DD task + evidence upload, hearing → calendar event. Test: scenario 11 `[gate]`
