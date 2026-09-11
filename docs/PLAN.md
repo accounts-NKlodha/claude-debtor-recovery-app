@@ -17,8 +17,8 @@ tasks share no files; shared-contract edits are serialized.
 ## Phase 1 — Design
 
 - [x] 1.1 Primitive inventory locked (button/card/badge/table/tabs/sheet/dialog/status-pill/empty-state) + new shared primitives (PageHeader eyebrow/hero, SpotlightCard, ChipFilterRow) added while revamping against the owner-approved wireframes at `C:\Users\lovel\.traycer\epics\2db606ba-873f-4fe0-8c3d-769517a768c0\artifacts\ui-ux-approval-gate`
-- [x] 1.2 Key-screen layouts revamped against the wireframes: Today, Cases, Case detail, Client overview, Communications, GST, MSME. Payments/Intake still on the older layout (functional, header-only polish applied).
-- [x] 1.3 App shell + navigation: nav badge counts wired to live data; relabeled `/gst`↔`/msme` (were mislabeled "Portal runs"/"DD-Hearings" regardless of content). Responsive 320/768/1024/1440 not formally re-verified after the revamp.
+- [x] 1.2 Key-screen layouts revamped against the wireframes: Today, Cases, Case detail, Client overview, Communications, GST, MSME, Payments. Intake still on the older tabs layout (functional, header polish only — wireframe's numbered-wizard import UX not rebuilt).
+- [x] 1.3 App shell + navigation: nav badge counts wired to live data; relabeled `/gst`↔`/msme` (were mislabeled "Portal runs"/"DD-Hearings" regardless of content). Responsive spot-check at 375px done for Today/Cases: Today stacks cleanly; Cases' table scrolls horizontally instead of the wireframe's card-list-with-disclosure pattern (functional, not spec-matching). 768/1024/1440 and the remaining screens not spot-checked.
 
 ## Phase 2 — Build (parallel where marked ∥)
 
