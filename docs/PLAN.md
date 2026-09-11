@@ -26,7 +26,7 @@ tasks share no files; shared-contract edits are serialized.
 - [x] 2.2 ∥ **M9 Dashboards UI**: `/today` exception queue, `/cases` table, `/cases/[id]` detail with automation-state panel, `/client` overview `[gate]`
 - [x] 2.2b **Repository seam**: `src/server/repository.ts` interface + `MemoryRepository` (default, tested) + `SupabaseRepository` (type-checked, not live-verified) + `getRepo()` factory. Every page reads through it instead of `@/lib/mock-data` directly `[gate]`
 - [x] 2.3a **M2 Intake — manual + bulk**: manual invoice form and bulk CSV commit both create real draft cases through `createDraftCase()`; live-tested end-to-end. Tests: scenarios 0,2 `[gate]`
-- [ ] 2.3b **M2 Intake — OCR**: scanned/photo upload, OCR review screen with provenance, low-confidence correction flow. Test: scenario 1
+- [x] 2.3b **M2 Intake — OCR correction**: OCR review screen + low-confidence correction flow, live-tested end-to-end on case-4. Test: scenario 1 — scanned/photo upload capture itself (vs. manual entry) still not wired (no Storage)
 - [ ] 2.4 **M3 Workflow API**: persist `orchestration_runs`/`step_attempts`, wire `advance()` to a job runner (pg-boss-style interface, in-memory impl for pilot), timer scheduling. Tests: scenarios 3,4,14,15,16 `[gate]`
 - [x] 2.5 **M4 Payments**: record payment + `allocateRecovery` persistence, client-confirm toggle → cancel escalation. Test: scenario 7 `[gate]` — end-to-end through `/payments` → `applyConfirmedPayment` → `advance()`, live-tested in browser (not just unit tests)
 - [x] 2.6a **M5 Communications — initial send**: send via adapter + `runAdapter`, unified log UI. Live-tested end-to-end (active → sent → delivered → 24h timer, or both-channels-failed → contact_update_required) `[gate]`
