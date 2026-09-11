@@ -127,4 +127,21 @@ export interface Repository {
     caseId: string,
     staffReference: string,
   ): Promise<{ case: RecoveryCase; referenceNumber: string | null }>;
+
+  /**
+   * MSME ODR seven-stage filing (PRD §12). Each stage saves/resumes
+   * independently of the case's workflow status; the case only transitions
+   * once submission is acknowledged (diary number + petition PDF captured).
+   */
+  saveMsmeStage(
+    caseId: string,
+    stage: import("@/contract/adapters").MsmeStage,
+    payload: Record<string, unknown>,
+  ): Promise<{ resumeToken: string | null }>;
+  /** Builds the immutable preview snapshot ahead of final submit. */
+  buildMsmePreview(caseId: string): Promise<{ previewPdfKey: string | null; previewHash: string | null }>;
+  /** Called after the operator confirms final submit. Fails closed on drift. */
+  captureMsmeAcknowledgement(
+    caseId: string,
+  ): Promise<{ case: RecoveryCase; diaryNumber: string | null; petitionPdfKey: string | null }>;
 }

@@ -501,4 +501,31 @@ export class SupabaseRepository implements Repository {
     // raise an urgent audit_events row (fail closed -- PRD §11, scenario 9).
     throw new Error("SupabaseRepository.captureGstFiling: not wired yet -- see src/domain/gst.ts");
   }
+
+  async saveMsmeStage(
+    _caseId: string,
+    _stage: import("@/contract/adapters").MsmeStage,
+    _payload: Record<string, unknown>,
+  ): Promise<{ resumeToken: string | null }> {
+    // TODO(api): call the real MSME adapter's saveStage(), audit it.
+    throw new Error("SupabaseRepository.saveMsmeStage: not wired yet -- see src/domain/msme.ts");
+  }
+
+  async buildMsmePreview(
+    _caseId: string,
+  ): Promise<{ previewPdfKey: string | null; previewHash: string | null }> {
+    // TODO(api): call buildPreview(), store the immutable snapshot as a
+    // portal_artifacts row, audit it.
+    throw new Error("SupabaseRepository.buildMsmePreview: not wired yet -- see src/domain/msme.ts");
+  }
+
+  async captureMsmeAcknowledgement(
+    _caseId: string,
+  ): Promise<{ case: RecoveryCase; diaryNumber: string | null; petitionPdfKey: string | null }> {
+    // TODO(api): call captureAcknowledgement() through run-adapter.ts; on
+    // success apply src/domain/msme.ts applyMsmeFiled() and INSERT the
+    // communications row; on drift/permanent failure apply
+    // applyMsmeAutomationFailed() and raise an urgent audit_events row.
+    throw new Error("SupabaseRepository.captureMsmeAcknowledgement: not wired yet -- see src/domain/msme.ts");
+  }
 }

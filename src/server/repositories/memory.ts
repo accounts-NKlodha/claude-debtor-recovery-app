@@ -16,9 +16,11 @@ import {
   buildReminderMessage,
 } from "@/domain/reminder";
 import { applyGstAutomationFailed, applyGstFiled, applyGstPrepared } from "@/domain/gst";
+import { applyMsmeAutomationFailed, applyMsmeFiled } from "@/domain/msme";
 import { runAdapter } from "@/orchestrator/run-adapter";
 import { getAdapters } from "@/adapters";
 import { gstComposeSchema, type GstComposeInput } from "@/contract/schemas";
+import type { MsmeStage } from "@/contract/adapters";
 import type { Communication, PaymentRecord } from "@/contract/types";
 import type { AgeingBucket, DashboardKpis, Repository, StagePoint, TrendPoint } from "../repository";
 
@@ -368,5 +370,100 @@ export class MemoryRepository implements Repository {
     });
 
     return tick({ case: updatedCase, referenceNumber });
+  }
+
+  async saveMsmeStage(caseId: string, stage: MsmeStage, payload: Record<string, unknown>) {
+    const idempotencyKey = `msme-stage:${caseId}:${stage}`;
+    const outcome = await runAdapter(
+      (key) => getAdapters().msmePortal.saveStage({ idempotencyKey: key, caseId, stage, payload }),
+      idempotencyKey,
+    );
+    mock.appendAudit({
+      action: "msme.stage_saved",
+      entity: "recovery_case",
+      entityId: caseId,
+      reason: `Stage "${stage}" saved (${outcome.result.outcome})`,
+    });
+    return tick({ resumeToken: outcome.result.data?.resumeToken ?? null });
+  }
+
+  async buildMsmePreview(caseId: string) {
+    const idempotencyKey = `msme-preview:${caseId}`;
+    const outcome = await runAdapter((key) => getAdapters().msmePortal.buildPreview(key), idempotencyKey);
+    mock.appendAudit({
+      action: "msme.preview_built",
+      entity: "recovery_case",
+      entityId: caseId,
+      reason: `Immutable preview snapshot generated (${outcome.result.outcome})`,
+    });
+    return tick({
+      previewPdfKey: outcome.result.data?.previewPdfKey ?? null,
+      previewHash: outcome.result.data?.previewHash ?? null,
+    });
+  }
+
+  async captureMsmeAcknowledgement(caseId: string) {
+    const kase = mock.getCase(caseId);
+    if (!kase) throw new Error(`captureMsmeAcknowledgement: case ${caseId} not found`);
+
+    const idempotencyKey = `msme-ack:${caseId}`;
+    const outcome = await runAdapter(
+      (key) => getAdapters().msmePortal.captureAcknowledgement(key),
+      idempotencyKey,
+    );
+
+    if (outcome.result.outcome === "drift_detected" || outcome.result.outcome === "permanent_failure") {
+      const failed = applyMsmeAutomationFailed(
+        kase,
+        outcome.urgentTask?.reason ?? outcome.result.errorCode ?? "MSME filing capture failed",
+      );
+      const updatedCase = mock.mutateCase(caseId, failed.updatedCase);
+      mock.appendAudit({
+        action: "msme.filing_failed",
+        entity: "recovery_case",
+        entityId: caseId,
+        reason: failed.note,
+      });
+      return tick({ case: updatedCase, diaryNumber: null, petitionPdfKey: null });
+    }
+
+    if (outcome.result.outcome !== "success") {
+      return tick({ case: kase, diaryNumber: null, petitionPdfKey: null });
+    }
+
+    const diaryNumber = outcome.result.data?.diaryNumber ?? null;
+    const petitionPdfKey = outcome.result.data?.petitionPdfKey ?? null;
+    const filed = applyMsmeFiled(kase);
+    const updatedCase = mock.mutateCase(caseId, filed.updatedCase);
+
+    const debtor = mock.getDebtor(kase.debtorId);
+    mock.insertCommunication({
+      id: `com-${nanoid(8)}`,
+      caseId,
+      organisationId: kase.organisationId,
+      channel: "email",
+      direction: "outbound",
+      templateKey: "msme_odr_filed_v1",
+      templateVersion: 1,
+      subject: `MSME ODR filed — ${debtor?.name ?? "debtor"}`,
+      body: `The MSME ODR claim has been submitted. Diary number: ${diaryNumber ?? "pending"}.`,
+      providerMessageId: null,
+      threadRef: `thread-${caseId}`,
+      deliveryStatus: "delivered",
+      hasSecureLink: false,
+      replyClassification: null,
+      reviewedById: null,
+      createdAt: new Date().toISOString(),
+      deliveredAt: new Date().toISOString(),
+    } satisfies Communication);
+
+    mock.appendAudit({
+      action: "msme.filed",
+      entity: "recovery_case",
+      entityId: caseId,
+      reason: `${filed.note}; diary number ${diaryNumber ?? "pending"}`,
+    });
+
+    return tick({ case: updatedCase, diaryNumber, petitionPdfKey });
   }
 }

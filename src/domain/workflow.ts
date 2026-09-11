@@ -326,11 +326,11 @@ export function advance(state: WorkflowState, event: WorkflowEvent): Transition 
             next: set(state, {
               status: "msme_odr_filed",
               eligibilityRoute: "msme",
-              waitingOn: "staff",
-              blocker: "Complete seven-stage ODR filing pack",
-              nextAction: "Prepare MSME ODR filing",
+              waitingOn: "portal",
+              blocker: null,
+              nextAction: "Poll MSEFC portal for hearing date",
             }),
-            note: "MSME eligible — preparing ODR filing",
+            note: "MSME eligible — ODR filing submitted and acknowledged",
             effect: { kind: "prepare_msme" },
           };
         }

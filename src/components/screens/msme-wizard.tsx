@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Check, Lock, Save, ChevronLeft, ChevronRight } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Check, Lock, Save, ChevronLeft, ChevronRight, CircleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,6 +10,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import {
+  buildMsmePreviewAction,
+  captureMsmeAcknowledgementAction,
+  saveMsmeStageAction,
+} from "@/app/actions/msme";
+import type { MsmeStage } from "@/contract/adapters";
 
 const STAGES = [
   "Claimant",
@@ -19,6 +26,16 @@ const STAGES = [
   "Checklist",
   "Preview",
 ] as const;
+
+const STAGE_KEYS: MsmeStage[] = [
+  "claimant",
+  "respondent",
+  "advocate",
+  "statement_of_claim",
+  "documents",
+  "checklist",
+  "preview",
+];
 
 type Data = Record<string, string>;
 
@@ -63,9 +80,20 @@ function TextField({
 }
 
 export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
+  const router = useRouter();
   const [step, setStep] = React.useState(0);
   const [locked, setLocked] = React.useState(false);
   const [saved, setSaved] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+  const [preview, setPreview] = React.useState<{ pdfKey: string | null; hash: string | null } | null>(
+    null,
+  );
+  const [submitting, setSubmitting] = React.useState(false);
+  const [acknowledgement, setAcknowledgement] = React.useState<{
+    diaryNumber: string | null;
+    petitionPdfKey: string | null;
+  } | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
   const [showErrors, setShowErrors] = React.useState(false);
   const [data, setData] = React.useState<Data>({
     claimantName: seed.claimantName,
@@ -100,11 +128,45 @@ export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
       return;
     }
     setShowErrors(false);
-    setStep((s) => Math.min(s + 1, STAGES.length - 1));
+    const nextStep = Math.min(step + 1, STAGES.length - 1);
+    setStep(nextStep);
+    if (STAGE_KEYS[nextStep] === "preview") {
+      buildMsmePreviewAction(seed.caseId)
+        .then((res) => setPreview({ pdfKey: res.previewPdfKey, hash: res.previewHash }))
+        .catch(() => setError("Failed to build the preview snapshot"));
+    }
   };
   const prev = () => {
     setShowErrors(false);
     setStep((s) => Math.max(s - 1, 0));
+  };
+
+  const saveAndResume = () => {
+    setSaving(true);
+    setError(null);
+    saveMsmeStageAction(seed.caseId, STAGE_KEYS[step], data)
+      .then(() => setSaved(new Date().toLocaleTimeString("en-IN")))
+      .catch(() => setError("Failed to save this stage"))
+      .finally(() => setSaving(false));
+  };
+
+  const submit = () => {
+    setSubmitting(true);
+    setError(null);
+    captureMsmeAcknowledgementAction(seed.caseId)
+      .then((res) => {
+        if (!res.diaryNumber) {
+          setError(
+            "Submission did not return a diary number -- check Audit / Security for the failure reason.",
+          );
+          return;
+        }
+        setAcknowledgement({ diaryNumber: res.diaryNumber, petitionPdfKey: res.petitionPdfKey });
+        setLocked(true);
+        router.refresh();
+      })
+      .catch(() => setError("Failed to submit the filing"))
+      .finally(() => setSubmitting(false));
   };
 
   return (
@@ -243,6 +305,24 @@ export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
                   <span className="text-xs">{v || "—"}</span>
                 </div>
               ))}
+              {preview ? (
+                <div className="mt-2 border-t border-border pt-2 text-xs text-muted-foreground">
+                  Preview snapshot: <span className="font-mono">{preview.pdfKey}</span>
+                  <br />
+                  Hash: <span className="font-mono">{preview.hash}</span>
+                </div>
+              ) : null}
+              {acknowledgement ? (
+                <div className="mt-2 border-t border-success/40 pt-2 text-xs">
+                  <p className="font-medium text-success">Submitted and acknowledged</p>
+                  <p>
+                    Diary number: <span className="font-mono">{acknowledgement.diaryNumber}</span>
+                  </p>
+                  <p>
+                    Petition PDF: <span className="font-mono">{acknowledgement.petitionPdfKey}</span>
+                  </p>
+                </div>
+              ) : null}
             </div>
           )}
         </CardContent>
@@ -257,23 +337,22 @@ export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
             Next <ChevronRight className="h-3.5 w-3.5" />
           </Button>
         ) : (
-          <Button onClick={() => setLocked(true)} disabled={locked}>
-            {locked ? "Submitted" : "Submit filing"}
+          <Button onClick={submit} disabled={locked || submitting}>
+            {locked ? "Submitted" : submitting ? "Submitting…" : "Submit filing"}
           </Button>
         )}
-        <Button
-          variant="ghost"
-          onClick={() => {
-            setSaved(new Date().toLocaleTimeString("en-IN"));
-          }}
-          disabled={locked}
-        >
-          <Save className="h-3.5 w-3.5" /> Save &amp; resume later
+        <Button variant="ghost" onClick={saveAndResume} disabled={locked || saving}>
+          <Save className="h-3.5 w-3.5" /> {saving ? "Saving…" : "Save & resume later"}
         </Button>
         {saved ? (
           <span className="text-xs text-muted-foreground">Draft saved at {saved}</span>
         ) : null}
         {locked ? <Badge tone="success">Filing locked</Badge> : null}
+        {error ? (
+          <span className="flex items-center gap-1.5 text-xs text-danger" role="alert">
+            <CircleAlert className="h-3.5 w-3.5" /> {error}
+          </span>
+        ) : null}
       </div>
     </div>
   );
