@@ -297,54 +297,24 @@ export class SupabaseRepository implements Repository {
       };
     }
 
-    // The hand-written Database type (src/lib/supabase/types.ts) doesn't
-    // carry enough generic plumbing for .insert()'s overload resolution --
-    // this is the first write call in this file. `as never` bypasses it for
-    // this one call; the row shape is still checked against OrganisationRow.
-    const row: Database["public"]["Tables"]["organisations"]["Insert"] = {
-      client_code: input.clientCode,
-      legal_entity_name: input.legalEntityName,
-      creditor_gstin: input.creditorGstin ?? null,
-      udyam_number: input.udyamNumber ?? null,
-      jito_member: input.jitoMember,
-    };
-    const insertRes = await supabase
-      .from("organisations")
-      .insert(row as never)
-      .select("*")
-      .single();
-    if (insertRes.error) {
-      throw new Error(`SupabaseRepository.createOrganisation: ${insertRes.error.message}`);
-    }
-    // Same overload-resolution limitation as elsewhere in this file (see the
-    // comment above) -- .single()'s result also infers as `never`.
-    const created = insertRes.data as unknown as OrganisationRow;
-
-    // Attribution via the privileged writer (supabase/migrations/0005_privileged_audit_writer.sql),
-    // which derives actor_id from auth.uid() itself -- `actor` here is not
-    // passed through to the RPC call (there is no argument for it) and
-    // exists only so this method's signature matches every other mutation's
-    // "cannot be called without an authorized actor" invariant (see
-    // src/server/repository.ts). NOT executed against a live database in
-    // this build -- type-checked only, per the file header.
-    const auditRes = await supabase.rpc("record_audit_event" as never, {
-      p_organisation_id: created.id,
-      p_action: "organisation.created",
-      p_entity: "organisation",
-      p_entity_id: created.id,
+    // INSERT + audit happen atomically inside create_organisation() (see
+    // supabase/migrations/0006_production_write_rpcs.sql) -- two sequential
+    // Supabase calls here would leave a real gap: a crash or transient
+    // failure between them could commit the organisation with no audit row.
+    const created = await callWriteRpc<OrganisationRow>(supabase, "create_organisation", {
+      p_client_code: input.clientCode,
+      p_legal_entity_name: input.legalEntityName,
+      p_creditor_gstin: input.creditorGstin ?? null,
+      p_udyam_number: input.udyamNumber ?? null,
+      p_jito_member: input.jitoMember,
       p_reason: nameCollision
-        ? `New client onboarded: ${created.legal_entity_name} (${created.client_code}) -- ` +
+        ? `New client onboarded: ${input.legalEntityName} (${input.clientCode}) -- ` +
           `staff confirmed this is distinct from existing client ${nameCollision.client_code}; ` +
           `override reason: ${input.duplicateOverrideReason}`
-        : `New client onboarded: ${created.legal_entity_name} (${created.client_code})`,
-      p_metadata_json: null,
-    } as never);
-    if (auditRes.error) {
-      throw new Error(
-        `SupabaseRepository.createOrganisation: organisation created but audit attribution failed ` +
-          `(${auditRes.error.message}) -- actor ${actor.actorId}/${actor.actorRole}`,
-      );
-    }
+        : `New client onboarded: ${input.legalEntityName} (${input.clientCode})`,
+      p_expected_actor_id: actor.actorId,
+    });
+
     return { status: "created", organisation: toOrganisation(created) };
   }
 

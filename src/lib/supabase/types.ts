@@ -318,6 +318,20 @@ export interface Database {
         };
         Returns: { case: RecoveryCaseRow; invoice: InvoiceRow; debtor: DebtorRow };
       };
+      /** Admin-only (checked inside the function); inserts + audits the new
+       * organisation atomically -- see 0006_production_write_rpcs.sql. */
+      create_organisation: {
+        Args: {
+          p_client_code: string;
+          p_legal_entity_name: string;
+          p_creditor_gstin: string | null;
+          p_udyam_number: string | null;
+          p_jito_member: boolean;
+          p_reason: string | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: OrganisationRow;
+      };
     };
     Enums: {
       case_status: CaseStatus;

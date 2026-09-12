@@ -535,3 +535,63 @@ $$;
 
 revoke execute on function create_case_from_invoice(uuid, jsonb, jsonb, jsonb, text, uuid) from public;
 grant execute on function create_case_from_invoice(uuid, jsonb, jsonb, jsonb, text, uuid) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- create_organisation: insert a new organisation row and audit it --
+-- atomically. P0-4 static audit finding: SupabaseRepository.createOrganisation
+-- previously did these as two sequential Supabase calls (an INSERT, then a
+-- separate record_audit_event RPC) -- already fail-loud if the second call
+-- errored, but not atomic: a crash or transient failure between the two
+-- could leave an organisation row with no audit trail. Duplicate checks
+-- (client_code/creditor_gstin/legal_entity_name collisions) stay as
+-- pre-flight reads in TypeScript -- they are not mutations, so they carry
+-- no atomicity requirement of their own; client_code additionally has a DB
+-- unique constraint (0001_init.sql) as defence in depth.
+--
+-- Admin-only (P0-1/P0-2-R2: onboarding a new client reads as Admin's
+-- "Configuration" responsibility, not staff's case-operational one --
+-- src/app/actions/organisations.ts), enforced here as well as at the
+-- application layer.
+-- ---------------------------------------------------------------------------
+
+create or replace function create_organisation(
+  p_client_code text,
+  p_legal_entity_name text,
+  p_creditor_gstin text,
+  p_udyam_number text,
+  p_jito_member boolean,
+  p_reason text,
+  p_expected_actor_id uuid default null
+)
+returns organisations
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_actor_role text;
+  v_org organisations;
+begin
+  if auth.uid() is null then
+    raise exception 'create_organisation: no authenticated caller' using errcode = '28000';
+  end if;
+  if p_expected_actor_id is not null and p_expected_actor_id is distinct from auth.uid() then
+    raise exception 'create_organisation: caller identity mismatch' using errcode = '28000';
+  end if;
+  select role::text into v_actor_role from app_users where id = auth.uid();
+  if v_actor_role is distinct from 'admin' then
+    raise exception 'create_organisation: admin session required' using errcode = '42501';
+  end if;
+
+  insert into organisations (client_code, legal_entity_name, creditor_gstin, udyam_number, jito_member)
+  values (p_client_code, p_legal_entity_name, p_creditor_gstin, p_udyam_number, p_jito_member)
+  returning * into v_org;
+
+  perform record_audit_event(v_org.id, 'organisation.created', 'organisation', v_org.id, p_reason, null);
+
+  return v_org;
+end;
+$$;
+
+revoke execute on function create_organisation(text, text, text, text, boolean, text, uuid) from public;
+grant execute on function create_organisation(text, text, text, text, boolean, text, uuid) to authenticated;

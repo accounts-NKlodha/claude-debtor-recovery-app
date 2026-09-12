@@ -115,6 +115,54 @@ describe("SupabaseRepository: MutationActor reaches the database, never the inpu
     const args = call!.args as Record<string, unknown>;
     expect(args.p_expected_actor_id).toBe(ACTOR.actorId);
   });
+
+  it("createOrganisation sends the actor's id as p_expected_actor_id, and INSERT+audit happen in one atomic RPC call (not two sequential requests)", async () => {
+    const { client, rpcCalls } = buildFakeSupabase({
+      rpcResponses: {
+        create_organisation: {
+          data: {
+            id: "org-1",
+            client_code: "NKL-X",
+            legal_entity_name: "X Pvt Ltd",
+            creditor_gstin: null,
+            udyam_number: null,
+            jito_member: false,
+            created_at: "2026-01-01T00:00:00Z",
+          },
+          error: null,
+        },
+      },
+      fromResponses: {
+        organisations: { data: null, error: null }, // duplicate pre-checks: none found
+      },
+    });
+    const createClient = await mockedCreateClient();
+    createClient.mockResolvedValue(client);
+
+    const { SupabaseRepository } = await import("./supabase");
+    const repo = new SupabaseRepository();
+    const result = await repo.createOrganisation(
+      {
+        clientCode: "NKL-X",
+        legalEntityName: "X Pvt Ltd",
+        creditorGstin: null,
+        udyamNumber: null,
+        jitoMember: false,
+        confirmDuplicateName: false,
+        duplicateOverrideReason: null,
+      },
+      ACTOR,
+    );
+
+    expect(result.status).toBe("created");
+    const rpcNames = rpcCalls.map((c) => c.fn);
+    // Exactly one write RPC -- confirms this is the atomic create_organisation
+    // call, not a separate insert followed by a separate audit RPC.
+    expect(rpcNames.filter((n) => n === "create_organisation")).toHaveLength(1);
+    expect(rpcNames).not.toContain("record_audit_event");
+    const call = rpcCalls.find((c) => c.fn === "create_organisation");
+    expect((call!.args as Record<string, unknown>).p_expected_actor_id).toBe(ACTOR.actorId);
+  });
 });
 
 describe("SupabaseRepository: a failed write is a rejected promise, never a fake success", () => {
@@ -177,6 +225,26 @@ describe("Privileged write RPCs (0006_production_write_rpcs.sql): tenant scope d
     expect(fnBody).toMatch(/if not is_staff\(\) then/);
   });
 
+  it("create_organisation is admin-only, matching P0-1/P0-2-R2's application-layer decision", () => {
+    const fnBody = migration.slice(migration.indexOf("function create_organisation("));
+    expect(fnBody).toMatch(/v_actor_role is distinct from 'admin'/);
+  });
+
+  it("record_audit_event and every 0006 function have EXECUTE explicitly revoked from PUBLIC (Postgres grants it by default)", () => {
+    for (const fn of [
+      "record_audit_event",
+      "set_automation_state",
+      "apply_case_mutation",
+      "record_payment_row",
+      "apply_payment_confirmation",
+      "correct_invoice_row",
+      "create_case_from_invoice",
+      "create_organisation",
+    ]) {
+      expect(migration).toMatch(new RegExp(`revoke execute on function ${fn}\\(`));
+    }
+  });
+
   it.each([
     "set_automation_state",
     "apply_case_mutation",
@@ -184,6 +252,7 @@ describe("Privileged write RPCs (0006_production_write_rpcs.sql): tenant scope d
     "apply_payment_confirmation",
     "correct_invoice_row",
     "create_case_from_invoice",
+    "create_organisation",
   ])("%s has an explicit authorization check and a caller-identity consistency check", (fnName) => {
     const fnBody = migration.slice(migration.indexOf(`function ${fnName}(`));
     const nextFnStart = fnBody.indexOf("create or replace function", 1);
