@@ -86,7 +86,7 @@ export function getProductionDataConfig(): ProductionDataConfig {
   // ship to every browser. Catch that specific, high-severity misconfiguration
   // class without ever logging the key itself.
   const anonKeyRole = decodeJwtRole(anonKey!);
-  if (anonKeyRole === "service_role") {
+  if (anonKeyRole === "service_role" || anonKey!.startsWith("sb_secret_")) {
     throw new ProductionConfigError(
       "Production data layer misconfigured -- NEXT_PUBLIC_SUPABASE_ANON_KEY appears to be a " +
         "service-role key. This variable is bundled into the client and must never hold " +

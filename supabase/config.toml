@@ -1,0 +1,9 @@
+project_id = "debtrecover"
+
+# Demo/test fixture data (supabase/seed.sql) is NOT applied by a plain
+# `supabase db push` -- only by `supabase db reset` (local dev) or
+# `supabase db push --include-seed` (explicit opt-in on a linked project).
+# See docs/adr/0002-seed-data-is-not-a-migration.md.
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]

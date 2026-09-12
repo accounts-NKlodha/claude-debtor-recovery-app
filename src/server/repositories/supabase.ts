@@ -7,11 +7,15 @@
  * client is the session-bound one from src/lib/supabase/server.ts, so RLS
  * applies exactly as it would to a direct query).
  *
- * NOT executed against a live database in this build (none is provisioned).
- * It is type-checked against supabase/migrations + src/lib/supabase/types.ts
- * so it is a mechanical, low-risk swap once a project exists -- treat any
- * runtime issue found against a real project as a bug to fix here, not a
- * reason to bypass the repository seam.
+ * P0-4 Gate B (2026-09-13): the underlying RPCs/RLS this file calls have
+ * been live-verified against a real Supabase project (schema, RLS matrix,
+ * every RPC, transaction rollback, concurrency) -- see docs/DEPLOYMENT.md
+ * §3a and the Gate B report. This TypeScript layer's own mapping/call
+ * construction is still only type-checked + unit-tested with a mocked
+ * client (src/server/repositories/supabase.test.ts), not exercised through
+ * a live end-to-end Next.js request in this build -- treat any runtime
+ * issue found there as a bug to fix here, not a reason to bypass the
+ * repository seam.
  */
 
 import { createClient } from "@/lib/supabase/server";
@@ -1266,7 +1270,18 @@ export class SupabaseRepository implements Repository {
     const res = await supabase.from("system_settings").select("*").eq("key", "automation").maybeSingle();
     if (res.error) throw new Error(`SupabaseRepository.getAutomationState: ${res.error.message}`);
     const row = res.data as unknown as { value_json: { enabled: boolean } } | null;
-    if (!row) throw new Error("SupabaseRepository.getAutomationState: system_settings row missing");
+    if (!row) {
+      // Live-verified (Gate B): `data: null` here means either the row is
+      // genuinely missing (a migration didn't run) OR -- far more likely --
+      // the caller has no staff/admin session, so system_settings_staff_read
+      // hides the row entirely; PostgREST can't tell these apart, and
+      // neither can we. Do not claim data corruption.
+      throw new Error(
+        "SupabaseRepository.getAutomationState: no system_settings row visible to this session " +
+          "-- expected if the caller has no authenticated staff/admin session (RLS hides the row), " +
+          "otherwise the 0006 migration's seed row is missing",
+      );
+    }
     return { enabled: row.value_json.enabled };
   }
 

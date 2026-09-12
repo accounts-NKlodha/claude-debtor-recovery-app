@@ -1,13 +1,52 @@
--- 0003_seed.sql
--- Deterministic demo seed. All ids are fixed so tests can reference them:
+-- supabase/seed.sql
+-- Deterministic DEMO/TEST data (fictional companies -- Acme Traders, Bharat
+-- Steel Industries, Comet Logistics LLP). All ids are fixed so tests can
+-- reference them:
 --   orgs      00000000-0000-0000-0000-0000000000{01..04}
 --   users     ...{11 staff, 12 admin, 13 client-Acme, 14 client-Bharat/Comet}
 --   debtors   ...{21..26}
 --   cases     ...{31..39}
 --   invoices  ...{41..4e}
 --
--- Safe to run after 0001/0002. Uses ON CONFLICT DO NOTHING so re-running is a
--- no-op. RLS does not apply to the migration/superuser role that loads this.
+-- Gate B finding (P0-4 Gate B, live verification): this file used to be
+-- supabase/migrations/0003_seed.sql. A migration file is applied by
+-- `supabase db push` on every fresh database with no way to opt out --
+-- meaning every future production deployment would silently receive this
+-- fictional data merely by replaying the migration chain, in direct
+-- contradiction of docs/DEPLOYMENT.md's "0003_seed is demo data -- run ONLY
+-- in staging, never production" rule the file itself never actually
+-- enforced.
+--
+-- Moved to Supabase's dedicated seed-file convention instead (declared in
+-- supabase/config.toml's [db.seed] section). This is NOT a migration and is
+-- never applied by a plain `supabase db push`:
+--   * `supabase db reset` (local Docker dev) applies it automatically --
+--     convenient for local development, never touches a remote project.
+--   * `supabase db push --include-seed` applies it to a LINKED project --
+--     an explicit, deliberate opt-in a human must type; ordinary
+--     `supabase db push` (the command in docs/DEPLOYMENT.md's production
+--     runbook) never does this.
+-- A fresh production database that only ever runs `supabase db push`
+-- (without `--include-seed`) will never see this file at all.
+--
+-- Was applied to the live Gate B project (lsuudervqofienqabmaz) as
+-- migrations/0003_seed.sql before this move -- that history entry is left
+-- in place deliberately (see docs/adr/0002-seed-data-is-not-a-migration.md
+-- and supabase/README.md) rather than rewritten, per the project's
+-- no-reckless-history-rewrite convention. Fresh databases going forward
+-- never see 0003 as a migration at all -- it no longer exists in
+-- supabase/migrations/.
+--
+-- Two data bugs found and fixed during that first-ever live execution
+-- (never successfully applied anywhere before): a short VALUES row on the
+-- second recovery_cases tuple, and two rows using waiting_on = 'debtor',
+-- which is not a valid enum value (the model only knows
+-- system|client|staff|portal -- the debtor is external to the app).
+--
+-- Safe to (re-)run any time after 0001/0002/0004-0007: every insert uses
+-- ON CONFLICT DO NOTHING. RLS does not apply to the role that loads this
+-- (migration/seed execution runs with elevated privileges, same as any
+-- other migration).
 
 -- ---------------------------------------------------------------------------
 -- Organisations: 1 recovery firm + 3 client firms
@@ -60,8 +99,9 @@ insert into recovery_cases
    85000000, 0, '00000000-0000-0000-0000-000000000011', 'ACME-Q2', null, null),
 
   ('00000000-0000-0000-0000-000000000032', '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000022',
-   'under_validation', 'prepare', 'staff', 'OCR confidence below threshold on invoice SUN-0092',
-   'validate_invoices', null, null, null,
+   'under_validation', 'prepare', 'staff', null,
+   'validate_invoices', 'OCR confidence below threshold on invoice SUN-0092', null, null,
+   null,
    42000000, 0, '00000000-0000-0000-0000-000000000011', 'ACME-Q2', null, null),
 
   ('00000000-0000-0000-0000-000000000033', '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000021',
@@ -70,12 +110,12 @@ insert into recovery_cases
    100000000, 0, '00000000-0000-0000-0000-000000000011', 'ACME-Q2', now() - interval '6 days', null),
 
   ('00000000-0000-0000-0000-000000000034', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000023',
-   'initial_communication_sent', 'assist', 'debtor', now() - interval '9 days',
+   'initial_communication_sent', 'assist', 'system', now() - interval '9 days',
    'await_debtor_reply', null, 'Send first follow-up reminder', now() + interval '2 days', 'msme',
    120000000, 0, '00000000-0000-0000-0000-000000000011', 'BHARAT-2026', now() - interval '9 days', null),
 
   ('00000000-0000-0000-0000-000000000035', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000024',
-   'promise_to_pay', 'assist', 'debtor', now() - interval '14 days',
+   'promise_to_pay', 'assist', 'client', now() - interval '14 days',
    'track_promise', null, 'Verify promised payment received', now() + interval '3 days', 'msme',
    73500000, 0, '00000000-0000-0000-0000-000000000011', 'BHARAT-2026', now() - interval '14 days', null),
 

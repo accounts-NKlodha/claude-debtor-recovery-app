@@ -13,6 +13,21 @@ with Supabase (Mumbai `ap-south-1`) for Postgres + Auth + Storage. This is the
 | Object storage | Use Supabase Storage buckets `evidence` (private) and `portal-artifacts` (private). No public buckets. |
 | TLS | Terminate at the proxy; force HTTPS; HSTS on. |
 
+> **P0-4 Gate B region note:** the live project used for Gate B live-verification
+> (`lsuudervqofienqabmaz`) was provisioned in **`ap-northeast-2` (Seoul)**, not
+> `ap-south-1` (Mumbai). This was the region already selected when the project
+> was created for this task; per the task's own instruction, **no region
+> migration was performed during Gate B** (that's a separate, deliberate
+> operation — Supabase has no in-place region migration, only
+> dump-and-restore into a new `ap-south-1` project). This is a genuine
+> deviation from the PRD §13/§14 India-residency requirement and the
+> `ap-south-1` target above, and is **not resolved** by anything in this
+> document. Before real client data goes live: either provision a fresh
+> `ap-south-1` project and restore into it (see §6b's dump/restore
+> procedure), or get an explicit decision that Seoul is acceptable
+> (it very likely is not, given the residency requirement) — do not treat
+> the Gate B project as production-ready as-is on residency grounds alone.
+
 ## 2. Configure
 
 Create `.env.production` (never commit) from `.env.example`:
@@ -38,24 +53,57 @@ reach `NEXT_PUBLIC_*`.
 
 ## 3. Database
 
+Recommended: `supabase link --project-ref <ref>` then `supabase db push`
+(applies every file in `supabase/migrations/` in order; **never** touches
+`supabase/seed.sql` — see §3b). Equivalent via psql:
+
 ```bash
-psql "$DATABASE_URL" -f supabase/migrations/0001_init.sql
-psql "$DATABASE_URL" -f supabase/migrations/0002_rls.sql
-# 0003_seed is demo data — run ONLY in staging, never production
-psql "$DATABASE_URL" -f supabase/migrations/0004_tenant_consistency.sql
-psql "$DATABASE_URL" -f supabase/migrations/0005_privileged_audit_writer.sql
-psql "$DATABASE_URL" -f supabase/migrations/0006_production_write_rpcs.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f supabase/migrations/0001_init.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f supabase/migrations/0002_rls.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f supabase/migrations/0004_tenant_consistency.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f supabase/migrations/0005_privileged_audit_writer.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f supabase/migrations/0006_production_write_rpcs.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f supabase/migrations/0007_gate_b_hardening.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f supabase/migrations/0010_gate_b_digest_schema_fix.sql
+# Never against production: supabase/seed.sql (demo/test fixtures only -- see §3b)
 ```
 
 Apply in this exact numeric order — later migrations reference functions/tables
 the earlier ones create (`0006` calls `record_audit_event` from `0005`; `0004`'s
-composite foreign keys assume `0001`'s tables exist as originally shaped). None
-of these migrations have been executed against a live database in this build (see
-§3a) — treat any runtime error found when actually applying them as a bug to fix
-here, not a reason to hand-patch the live schema.
+composite foreign keys assume `0001`'s tables exist as originally shaped).
+
+**Live-verified (P0-4 Gate B, 2026-09-13):** this exact chain (0001, 0002, 0004,
+0005, 0006, 0007) applies cleanly via `supabase db push` against a real
+Supabase project (`lsuudervqofienqabmaz`) — not merely type-checked. Two data
+bugs in what was then `0003_seed.sql` were found and fixed during that first
+live execution (see `supabase/seed.sql`'s header and
+`docs/adr/0002-seed-data-is-not-a-migration.md`).
 
 Verify RLS with the plan in `supabase/README.md` (acceptance scenario 12: a client
 identity cannot read another organisation's rows).
+
+### 3b. Seed/demo data is opt-in, never automatic (P0-4 Gate B)
+
+`supabase/seed.sql` (fixed-UUID demo data for three fictional companies) is
+**not** a migration — plain `supabase db push` never applies it. It only runs
+via `supabase db reset` (local Docker dev) or the explicit
+`supabase db push --include-seed` flag. A fresh production database that only
+ever runs plain `db push`, per this section, never receives it. See
+`docs/adr/0002-seed-data-is-not-a-migration.md` for the full rationale (this
+used to be `migrations/0003_seed.sql`, a real migration file with no
+structural way to exclude it — found and fixed during Gate B).
+
+### 3c. First-admin bootstrap is a documented manual step, not a migration
+
+There is no automated path from "empty `app_users` table" to "first admin" —
+by design. `0007_gate_b_hardening.sql` restricts `app_users` writes to
+existing admins only (closing a staff-self-escalation hole found live during
+Gate B), which means the very first admin cannot be created through the app
+or through RLS-governed access at all. See `docs/ADMIN_BOOTSTRAP.md` for the
+exact, human-executed, one-time procedure. Do not encode this in a migration
+file — a migration replays automatically on every fresh database and would
+either hardcode a real person's identity into permanent schema history or
+have to guess who the first admin should be, neither of which is acceptable.
 
 ### 3a. Production data-layer invariant (P0-4)
 
@@ -88,15 +136,21 @@ Code-side (`src/lib/auth/`, `src/proxy.ts`) is complete and unit-tested
 (`src/lib/auth/context.test.ts`) without needing a live project. What's still
 required before staff/client sign-in actually works in production:
 
-1. In the Supabase project's Auth settings, enable the **Google** OAuth
-   provider and set the redirect URL to `https://debtor.nklodha.in/auth/callback`.
-2. Register that provider + redirect URL as an OAuth client in Google Cloud
-   Console; put the client ID/secret into Supabase's Google provider config
-   (not into this app's env — Supabase holds them).
-3. Build the actual `/sign-in` "Continue with Google" action and the
-   `/auth/callback` route handler that exchanges the OAuth code for a
-   session (`supabase.auth.exchangeCodeForSession`) — both are stubbed out
-   pending these credentials; see `src/app/sign-in/page.tsx`.
+1. In Supabase Auth URL configuration, set Site URL to
+   `https://debtor.nklodha.in` and allow the exact app callback
+   `https://debtor.nklodha.in/auth/callback`.
+2. In Google Cloud, create a Web application OAuth client. Its authorized
+   redirect URI is `https://<project-ref>.supabase.co/auth/v1/callback`
+   (copy the exact value from Supabase), **not the app callback above**.
+   Configure only the OpenID, email and profile scopes required for sign-in.
+   Put the Google client ID/secret in Supabase's Google provider settings,
+   never in app public environment variables.
+3. Code now implements the sign-in POST and PKCE callback exchange. Set
+   `NEXT_PUBLIC_APP_URL` to the trusted HTTPS app origin. Sign-in rejects
+   cross-origin POSTs; callbacks ignore forwarded host headers and reject
+   external return destinations. Unprovisioned identities are signed out;
+   clients land at `/client`, staff/admin at `/dashboard`. Google configuration
+   and a real browser sign-in still require live verification.
 4. Provision real `app_users` / `user_organisations` rows for every staff
    member and client contact (there is no self-serve signup flow by design —
    PRD access model).
@@ -143,11 +197,68 @@ with advisory-lock leader election to preserve idempotency invariants.
 
 ## 6. Backups (PRD §13)
 
-- Enable Supabase daily PITR backups (retained in-region).
+- On the Free plan, use manual off-site logical backups; do not assume daily
+  managed backups or PITR are included. Paid backup upgrades require a separate
+  cost decision. A database dump does not contain Storage object bytes.
 - Nightly `pg_dump` (encrypted, age/gpg) to a second India-region bucket.
 - Weekly **restore test** into a scratch project; confirm one full case audit
   trail reconstructs (acceptance scenario 13).
 - Google Drive secondary copy is allowed but is **not** the sole evidence store.
+
+### 6a. Free-plan limitation, confirmed (P0-4 Gate B, 2026-09-13)
+
+Supabase's Free plan includes **no automated backups and no Point-in-Time
+Recovery (PITR)** — both start at the Pro tier (Pro: 7 daily backups
+included; PITR: a paid add-on on top of Pro). This project
+(`lsuudervqofienqabmaz`) is on the Free plan; per this task's explicit
+instruction, the plan was **not** upgraded to test this. Until upgraded (a
+deliberate, separate cost decision — see the go-live gates below), the
+*only* backup that exists is one you take yourself.
+
+### 6b. Manual backup procedure (two options)
+
+**Option A — Supabase CLI, no raw DB password needed:**
+
+```bash
+supabase db dump --linked -f backup-$(date +%Y%m%d).sql
+```
+
+Uses the same access-token session as `supabase link`/`db push` (no
+`--password` prompt). **Requires Docker Desktop running locally** — the CLI
+runs `pg_dump` inside a container. This was not runnable in the automated
+Gate B environment (no Docker daemon available there); this exact command
+was not executed end-to-end during Gate B for that reason, not because of
+any credential restriction — run it yourself wherever Docker is available
+to actually validate the dump.
+
+**Option B — direct `pg_dump`, requires the database password:**
+
+```bash
+pg_dump "$DATABASE_URL" -f backup-$(date +%Y%m%d).sql --no-owner --no-privileges
+```
+
+Get `DATABASE_URL` (with password) from Supabase Dashboard → Project
+Settings → Database → Connection string. Needs `pg_dump` installed locally
+(matching the project's Postgres major version — 17, per this project's
+`database.version`).
+
+**Restore test** (either option's output), into a **scratch** project —
+never restore over a live one to "test":
+
+```bash
+psql "$SCRATCH_DATABASE_URL" -v ON_ERROR_STOP=1 -f backup-YYYYMMDD.sql
+```
+
+Then confirm row counts and one full case's audit trail
+(`audit_events` filtered by `entity_id`) reconstruct correctly — this is
+acceptance scenario 13. **Not executed in Gate B** (would require
+provisioning a second scratch project); documented here as the exact
+procedure to run before go-live, not claimed as verified.
+
+A database dump does **not** include Supabase Storage object bytes (invoice
+scans, portal screenshots) — those need a separate `storage.objects` +
+bucket-contents backup once Storage buckets are actually in use (not yet,
+per this build's scope).
 
 ## 7. Go-live gates (do not skip)
 
@@ -166,3 +277,12 @@ with advisory-lock leader election to preserve idempotency invariants.
 `src-tauri/target/release/bundle/`. Sign them (Windows: code-signing cert; macOS:
 notarize) before distributing to staff. The desktop app points at
 `https://debtor.nklodha.in` — deploy the web target first.
+
+## Gate B execution status
+
+See [SUPABASE_GATE_B.md](SUPABASE_GATE_B.md) for the current evidence and
+remaining gates. No live verification should be inferred from a successful build.
+
+Official configuration references:
+- https://supabase.com/docs/guides/auth/social-login/auth-google
+- https://supabase.com/docs/guides/platform/backups
