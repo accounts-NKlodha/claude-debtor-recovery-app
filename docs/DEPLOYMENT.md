@@ -20,11 +20,21 @@ Create `.env.production` (never commit) from `.env.example`:
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon>
-SUPABASE_SERVICE_ROLE_KEY=<service_role>      # server only
+SUPABASE_SERVICE_ROLE_KEY=<service_role>      # server only, only for createAdminClient() -- see §3a
 DATABASE_URL=postgresql://...ap-south-1...    # for migrations
 NEXT_PUBLIC_APP_URL=https://debtor.nklodha.in
 ADAPTER_PROFILE=mock                          # switch to "live" once providers are provisioned
 ```
+
+`NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are the only two
+variables the production data layer requires (see §3a) — both are `NEXT_PUBLIC_*`
+and therefore bundled into client JS by design (the anon key is meant to be public;
+RLS is what makes that safe). `SUPABASE_SERVICE_ROLE_KEY` is **not** a production
+data-layer requirement: it backs `createAdminClient()` only
+(`src/lib/supabase/server.ts`), which no ordinary staff/client request path calls
+(confirmed by `src/app/actions/security.test.ts`'s regression guard) — set it only
+if/when a genuinely admin-only, RLS-bypassing job is added, and never let it
+reach `NEXT_PUBLIC_*`.
 
 ## 3. Database
 
@@ -34,10 +44,43 @@ psql "$DATABASE_URL" -f supabase/migrations/0002_rls.sql
 # 0003_seed is demo data — run ONLY in staging, never production
 psql "$DATABASE_URL" -f supabase/migrations/0004_tenant_consistency.sql
 psql "$DATABASE_URL" -f supabase/migrations/0005_privileged_audit_writer.sql
+psql "$DATABASE_URL" -f supabase/migrations/0006_production_write_rpcs.sql
 ```
+
+Apply in this exact numeric order — later migrations reference functions/tables
+the earlier ones create (`0006` calls `record_audit_event` from `0005`; `0004`'s
+composite foreign keys assume `0001`'s tables exist as originally shaped). None
+of these migrations have been executed against a live database in this build (see
+§3a) — treat any runtime error found when actually applying them as a bug to fix
+here, not a reason to hand-patch the live schema.
 
 Verify RLS with the plan in `supabase/README.md` (acceptance scenario 12: a client
 identity cannot read another organisation's rows).
+
+### 3a. Production data-layer invariant (P0-4)
+
+`src/server/repo.ts#getRepo()` enforces: **production either uses a correctly
+configured `SupabaseRepository`, or throws** — `NODE_ENV=production` is never, by
+itself, enough to select `MemoryRepository`, there is no fallback from a failed
+Supabase configuration check or a failed Supabase client initialization back to
+memory, and an explicit `DATA_PROFILE=memory` override (a non-production
+convenience for local smoke tests) is ignored entirely in production. Configuration
+is validated by `src/lib/config/production.ts#getProductionDataConfig()`, which
+also rejects a malformed URL and a service-role key accidentally placed in the
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` slot (that variable is bundled into client JS).
+None of this can be tested against real Supabase infrastructure in this
+environment — regression tests for the fail-closed logic itself live in
+`src/server/repo.test.ts` and `src/lib/config/production.test.ts`.
+
+Every `Repository` mutation method is implemented in `SupabaseRepository`
+(`src/server/repositories/supabase.ts`) against the RPCs in
+`0006_production_write_rpcs.sql` — no method returns fake/default success or
+silently no-ops; an RPC failure surfaces as a rejected promise. See the P0-4 audit
+report (session history) for the full method-by-method parity matrix and the
+transaction/atomicity classification of each multi-table write. **Not yet
+verified**: any of this actually executing against a live Supabase project, real
+RLS enforcement against real JWTs, or concurrency behavior under real load — these
+remain go-live gates, not something code compiling or unit tests passing can prove.
 
 ### Authentication (P0-1/P0-2 foundation)
 

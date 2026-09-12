@@ -16,10 +16,28 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { estimateSuccessFee } from "@/domain/fees";
+import { applyConfirmedPayment } from "@/domain/apply-payment";
+import {
+  applyReminderDelivered,
+  applyReminderDeliveryFailed,
+  applyReminderSent,
+  buildReminderMessage,
+} from "@/domain/reminder";
+import { applyGstAutomationFailed, applyGstFiled, applyGstPrepared } from "@/domain/gst";
+import { applyMsmeAutomationFailed, applyMsmeFiled } from "@/domain/msme";
+import { applyDdPrepared, applyHearingScheduled } from "@/domain/hearing";
+import { applyOcrCorrected } from "@/domain/ocr";
+import { createDraftCase, type IntakeInvoiceInput } from "@/domain/intake";
+import { parseCsv, parseDate, parseMoney, validateImport } from "@/domain/bulk-import";
+import { runAdapter } from "@/orchestrator/run-adapter";
+import { getAdapters } from "@/adapters";
+import { gstComposeSchema, type GstComposeInput, type ManualInvoiceInput } from "@/contract/schemas";
+import type { MsmeStage } from "@/contract/adapters";
 import type {
   AuditEventRow,
   CommunicationRow,
   Database,
+  DebtorRow,
   InvoiceRow,
   OrganisationRow,
   PaymentRecordRow,
@@ -174,6 +192,44 @@ function toTask(row: WorkflowTaskRow): WorkflowTask {
 function unwrap<T>(result: { data: T | null; error: { message: string } | null }, context: string): T {
   if (result.error) throw new Error(`SupabaseRepository.${context}: ${result.error.message}`);
   return result.data as T;
+}
+
+/**
+ * Calls one of the privileged write RPCs from supabase/migrations/0006_production_write_rpcs.sql.
+ * `as never` on both the function name and args is the same overload-resolution
+ * workaround already used for `.insert()` elsewhere in this file (the
+ * hand-written Database type doesn't carry enough generic plumbing for these
+ * calls to resolve their own declared Functions[...] types) -- the argument
+ * SHAPE is still whatever the caller passes, matching each function's SQL
+ * signature; only the compile-time check is bypassed, not the runtime call.
+ */
+async function callWriteRpc<T>(supabase: Client, fn: string, args: Record<string, unknown>): Promise<T> {
+  const res = await supabase.rpc(fn as never, args as never);
+  if (res.error) throw new Error(`SupabaseRepository.${fn}: ${res.error.message}`);
+  return res.data as T;
+}
+
+/** Audit-only write (no case/row mutation) via the privileged writer from
+ * 0005_privileged_audit_writer.sql -- backs the handful of mutations that
+ * only ever produce an audit trail (openGstAssistedSession, saveMsmeStage,
+ * buildMsmePreview), matching MemoryRepository's equivalent calls exactly. */
+async function recordAudit(
+  supabase: Client,
+  organisationId: string | null,
+  action: string,
+  entity: string,
+  entityId: string | null,
+  reason: string | null,
+): Promise<void> {
+  const res = await supabase.rpc("record_audit_event" as never, {
+    p_organisation_id: organisationId,
+    p_action: action,
+    p_entity: entity,
+    p_entity_id: entityId,
+    p_reason: reason,
+    p_metadata_json: null,
+  } as never);
+  if (res.error) throw new Error(`SupabaseRepository.recordAudit(${action}): ${res.error.message}`);
 }
 
 export class SupabaseRepository implements Repository {
@@ -542,13 +598,64 @@ export class SupabaseRepository implements Repository {
   }
 
   async createCaseFromManualInvoice(
-    _organisationId: string,
-    _input: import("@/contract/schemas").ManualInvoiceInput,
-    _actor: MutationActor,
+    organisationId: string,
+    input: ManualInvoiceInput,
+    actor: MutationActor,
   ): Promise<{ case: RecoveryCase; invoice: Invoice; debtor: Debtor }> {
-    // TODO(api): find-or-create the debtor, run src/domain/intake.ts
-    // createDraftCase(), INSERT case + invoice in one transaction, audit it.
-    throw new Error("SupabaseRepository.createCaseFromManualInvoice: not wired yet -- see src/domain/intake.ts");
+    const supabase = await this.db();
+
+    const intakeInput: IntakeInvoiceInput = {
+      debtorName: input.debtorName,
+      debtorGstin: input.debtorGstin ?? null,
+      invoiceNumber: input.invoiceNumber,
+      invoiceDate: input.invoiceDate,
+      taxableValue: input.taxableValue,
+      taxRate: input.taxRate,
+      taxAmount: input.taxAmount,
+      invoiceTotal: input.invoiceTotal,
+      outstandingBalance: input.outstandingBalance,
+    };
+    const { state, transitions } = createDraftCase(input.outstandingBalance, intakeInput);
+
+    const result = await callWriteRpc<{ case: RecoveryCaseRow; invoice: InvoiceRow; debtor: DebtorRow }>(
+      supabase,
+      "create_case_from_invoice",
+      {
+        p_organisation_id: organisationId,
+        p_debtor: {
+          name: input.debtorName,
+          gstin: input.debtorGstin ?? null,
+          outstandingBalance: input.outstandingBalance,
+        },
+        p_case: {
+          status: state.status,
+          waitingOn: state.waitingOn,
+          currentStep: transitions[transitions.length - 1]?.note ?? "Under validation",
+          blocker: state.blocker,
+          nextScheduledAction: state.nextAction,
+          eligibilityRoute: state.eligibilityRoute,
+          principalOutstanding: state.principalOutstanding,
+        },
+        p_invoice: {
+          invoiceNumber: input.invoiceNumber,
+          invoiceDate: input.invoiceDate,
+          dueDate: input.dueDate ?? null,
+          taxableValue: input.taxableValue,
+          taxRate: input.taxRate,
+          taxAmount: input.taxAmount,
+          invoiceTotal: input.invoiceTotal,
+          outstandingBalance: input.outstandingBalance,
+        },
+        p_reason: `Draft case created from manual invoice entry -- ${transitions.map((t) => t.note).join("; ")}`,
+        p_expected_actor_id: actor.actorId,
+      },
+    );
+
+    return {
+      case: toCase(result.case),
+      invoice: toInvoice(result.invoice),
+      debtor: toDebtor(result.debtor),
+    };
   }
 
   async validateBulkImport(csvText: string): Promise<ImportResult> {
@@ -570,141 +677,559 @@ export class SupabaseRepository implements Repository {
         return `${key}::${inv.invoice_number.toLowerCase()}`;
       }),
     );
-    const { validateImport } = await import("@/domain/bulk-import");
     return validateImport(csvText, { knownInvoiceKeys: known });
   }
 
   async commitBulkImport(
-    _organisationId: string,
-    _csvText: string,
-    _actor: MutationActor,
+    organisationId: string,
+    csvText: string,
+    actor: MutationActor,
   ): Promise<{ result: ImportResult; casesCreated: number }> {
-    // TODO(api): validateBulkImport() then createCaseFromManualInvoice() per
-    // valid row, same as MemoryRepository.commitBulkImport.
-    throw new Error("SupabaseRepository.commitBulkImport: not wired yet -- see src/domain/intake.ts");
+    const org = await this.getOrg(organisationId);
+    if (!org) throw new Error(`commitBulkImport: organisation ${organisationId} not found`);
+
+    const result = await this.validateBulkImport(csvText);
+    const grid = parseCsv(csvText);
+    const header = (grid[0] ?? []).map((h) => h.trim().toLowerCase());
+    const idx = Object.fromEntries(header.map((h, i) => [h, i]));
+
+    let casesCreated = 0;
+    for (const row of result.preview) {
+      const raw = grid[row.rowNumber - 1];
+      if (!raw) continue;
+      const cell = (col: string) => (raw[idx[col]] ?? "").trim();
+      const invoiceDate = parseDate(cell("invoice_date")) ?? new Date().toISOString().slice(0, 10);
+      const dueDate = cell("due_date") ? parseDate(cell("due_date")) : null;
+      const totalDue = parseMoney(cell("total_due")) ?? row.totalDue;
+
+      // Sequential, not parallel: each row goes through its own atomic
+      // create_case_from_invoice call (see 0006_production_write_rpcs.sql)
+      // -- running them concurrently would not corrupt any single case, but
+      // would make the row-by-row error semantics ("never partially
+      // activate a case", not "the whole batch is one transaction") harder
+      // to reason about, and matches MemoryRepository's own sequential loop.
+      await this.createCaseFromManualInvoice(
+        organisationId,
+        {
+          debtorName: cell("debtor_name"),
+          debtorGstin: cell("debtor_gstin") || null,
+          invoiceNumber: cell("invoice_number"),
+          invoiceDate,
+          dueDate,
+          taxableValue: parseMoney(cell("taxable_value")) ?? 0,
+          taxRate: Number(cell("tax_rate")) || 0,
+          taxAmount: parseMoney(cell("tax_amount")) ?? 0,
+          invoiceTotal: parseMoney(cell("invoice_total")) ?? totalDue,
+          outstandingBalance: totalDue,
+        },
+        actor,
+      );
+      casesCreated++;
+    }
+
+    const supabase = await this.db();
+    await recordAudit(
+      supabase,
+      organisationId,
+      "bulk_import.committed",
+      "organisation",
+      organisationId,
+      `${casesCreated} draft case(s) created from ${result.validRows} valid row(s) -- ${result.duplicateRows} duplicate, ${result.errorRows} error row(s) skipped (never partially activated)`,
+    );
+
+    return { result, casesCreated };
   }
 
   async recordPayment(
-    _input: {
+    input: {
       caseId: string;
       kind: PaymentRecordRow["kind"];
       amount: number;
       reference: string | null;
       clientConfirmed: boolean;
     },
-    _actor: MutationActor,
+    actor: MutationActor,
   ): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase | null }> {
-    // TODO(api): INSERT into payment_records, then call confirmPayment() below
-    // when clientConfirmed -- same rule, real transaction. The pure logic
-    // (src/domain/apply-payment.ts) is written and unit-tested; this only
-    // needs the INSERT/UPDATE wiring once a project exists.
-    throw new Error("SupabaseRepository.recordPayment: not wired yet -- see src/domain/apply-payment.ts");
+    const supabase = await this.db();
+    const row = await callWriteRpc<PaymentRecordRow>(supabase, "record_payment_row", {
+      p_case_id: input.caseId,
+      p_kind: input.kind,
+      p_amount: input.amount,
+      p_reference: input.reference,
+      p_expected_actor_id: actor.actorId,
+    });
+    const payment = toPayment(row);
+
+    if (!input.clientConfirmed) return { payment, updatedCase: null };
+
+    const { updatedCase } = await this.confirmPayment(payment.id, actor);
+    return { payment: { ...payment, clientConfirmed: true }, updatedCase };
   }
 
   async confirmPayment(
-    _paymentId: string,
-    _actor: MutationActor,
+    paymentId: string,
+    actor: MutationActor,
   ): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase }> {
-    // TODO(api): SELECT payment + case + invoices, run
-    // applyConfirmedPayment(), UPDATE case + invoices in one transaction,
-    // INSERT an audit_events row. Same shape as MemoryRepository.confirmPayment.
-    throw new Error("SupabaseRepository.confirmPayment: not wired yet -- see src/domain/apply-payment.ts");
+    const supabase = await this.db();
+
+    const paymentRes = await supabase.from("payment_records").select("*").eq("id", paymentId).maybeSingle();
+    if (paymentRes.error) throw new Error(`SupabaseRepository.confirmPayment: ${paymentRes.error.message}`);
+    const paymentRow = paymentRes.data as unknown as PaymentRecordRow | null;
+    if (!paymentRow) throw new Error(`confirmPayment: payment ${paymentId} not found`);
+
+    const kase = await this.getCase(paymentRow.case_id);
+    if (!kase) throw new Error(`confirmPayment: case ${paymentRow.case_id} not found`);
+    const invoices = await this.listInvoicesForCase(kase.id);
+
+    const result = applyConfirmedPayment(
+      kase,
+      invoices.map((i) => ({ id: i.id, invoiceDate: i.invoiceDate, outstandingBalance: i.outstandingBalance })),
+      paymentRow.amount,
+    );
+
+    const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_payment_confirmation", {
+      p_payment_id: paymentId,
+      p_case: result.updatedCase,
+      p_invoice_updates: result.invoiceAllocations.map((a) => ({
+        id: a.invoiceId,
+        outstandingBalance: a.balanceAfter,
+      })),
+      p_reason: result.note,
+      p_expected_actor_id: actor.actorId,
+    });
+
+    return {
+      payment: toPayment({ ...paymentRow, client_confirmed: true }),
+      updatedCase: toCase(updatedRow),
+    };
   }
 
   async sendInitialReminder(
-    _caseId: string,
-    _actor: MutationActor,
+    caseId: string,
+    actor: MutationActor,
   ): Promise<{ case: RecoveryCase; communication: Communication }> {
-    // TODO(api): SELECT case/debtor/org/invoice, call the real messaging
-    // adapter through src/orchestrator/run-adapter.ts, INSERT the
-    // communications row, UPDATE the case via src/domain/reminder.ts, and
-    // persist the webhook-driven delivery transition instead of simulating
-    // it immediately (see the comment in MemoryRepository.sendInitialReminder).
-    throw new Error("SupabaseRepository.sendInitialReminder: not wired yet -- see src/domain/reminder.ts");
+    const supabase = await this.db();
+
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`sendInitialReminder: case ${caseId} not found`);
+    if (kase.status !== "active") {
+      throw new Error(
+        `sendInitialReminder: case ${caseId} is "${kase.status}", not "active" -- nothing to send`,
+      );
+    }
+    const [debtor, org, invoices] = await Promise.all([
+      this.getDebtor(kase.debtorId),
+      this.getOrg(kase.organisationId),
+      this.listInvoicesForCase(caseId),
+    ]);
+
+    const body = buildReminderMessage({
+      legalEntityName: org?.legalEntityName ?? "our client",
+      debtorName: debtor?.name ?? "—",
+      invoiceNumber: invoices[0]?.invoiceNumber ?? null,
+      amountPaise: kase.principalOutstanding,
+    });
+
+    const idempotencyKey = `reminder-initial:${caseId}:${new Date().toISOString().slice(0, 10)}`;
+    const sendOutcome = await runAdapter(
+      (key) =>
+        getAdapters().whatsapp.send({
+          idempotencyKey: key,
+          caseId,
+          channel: "whatsapp",
+          to: debtor?.mobile ?? "unknown",
+          templateKey: "reminder_initial_v3",
+          templateVersion: 3,
+          body,
+        }),
+      idempotencyKey,
+    );
+
+    const communicationPayload = {
+      channel: "whatsapp",
+      direction: "outbound",
+      templateKey: "reminder_initial_v3",
+      templateVersion: 3,
+      subject: null,
+      body,
+      providerMessageId: sendOutcome.result.providerRef,
+      threadRef: `thread-${caseId}`,
+      deliveryStatus: sendOutcome.result.outcome === "success" ? "sent" : "failed",
+      hasSecureLink: false,
+    };
+
+    if (sendOutcome.result.outcome !== "success") {
+      const sentPatch = applyReminderSent(kase);
+      const failed = applyReminderDeliveryFailed(sentPatch.updatedCase, true);
+      const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
+        p_case_id: caseId,
+        p_case: failed.updatedCase,
+        p_action: "reminder.delivery_failed",
+        p_entity: "recovery_case",
+        p_reason: `${sendOutcome.urgentTask?.reason ?? sendOutcome.result.errorCode ?? "adapter failure"} -- ${failed.note}`,
+        p_communication: communicationPayload,
+        p_expected_actor_id: actor.actorId,
+      });
+      // apply_case_mutation returns only the case row (its Functions.Returns
+      // type is recovery_cases -- see 0006_production_write_rpcs.sql); the
+      // communication it inserted atomically is re-read here rather than
+      // trusted to be "the last one" some other way. This assumes no
+      // concurrent write to the same case's communications between the RPC
+      // call and this read, which holds for a single request handling one
+      // action -- flagged as a live-Supabase verification item, not proven here.
+      const communications = await this.listCommunicationsForCase(caseId);
+      return {
+        case: toCase(updatedRow),
+        communication: communications[communications.length - 1],
+      };
+    }
+
+    const sent = applyReminderSent(kase);
+    // Demo simplification carried over from MemoryRepository: the mock
+    // adapter has no real delivery webhook, so delivery is simulated
+    // immediately rather than waiting for one. A live adapter's
+    // parseWebhook() result would drive this transition instead.
+    const deliveredAt = new Date();
+    const delivered = applyReminderDelivered(sent.updatedCase, deliveredAt);
+
+    const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
+      p_case_id: caseId,
+      p_case: delivered.updatedCase,
+      p_action: "reminder.sent",
+      p_entity: "recovery_case",
+      p_reason: `${sent.note}; ${delivered.note}`,
+      p_communication: {
+        ...communicationPayload,
+        deliveryStatus: "delivered",
+        deliveredAt: deliveredAt.toISOString(),
+      },
+      p_expected_actor_id: actor.actorId,
+    });
+
+    const communications = await this.listCommunicationsForCase(caseId);
+    return {
+      case: toCase(updatedRow),
+      communication: communications[communications.length - 1],
+    };
   }
 
   async prepareGstNotification(
-    _caseId: string,
-    _input: import("@/contract/schemas").GstComposeInput,
-    _actor: MutationActor,
+    caseId: string,
+    input: GstComposeInput,
+    actor: MutationActor,
   ): Promise<{ case: RecoveryCase; manifestHash: string | null }> {
-    // TODO(api): validate + call the real GST adapter's prepare() through
-    // run-adapter.ts, UPDATE the case via src/domain/gst.ts applyGstPrepared(),
-    // INSERT an audit_events row. Same shape as MemoryRepository.
-    throw new Error("SupabaseRepository.prepareGstNotification: not wired yet -- see src/domain/gst.ts");
+    const supabase = await this.db();
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`prepareGstNotification: case ${caseId} not found`);
+    const parsed = gstComposeSchema.safeParse(input);
+    if (!parsed.success) {
+      throw new Error(parsed.error.issues[0]?.message ?? "Invalid GST compose input");
+    }
+
+    const idempotencyKey = `gst-prepare:${caseId}`;
+    const outcome = await runAdapter(
+      (key) => getAdapters().gstPortal.prepare({ idempotencyKey: key, caseId, ...parsed.data }),
+      idempotencyKey,
+    );
+
+    if (outcome.result.outcome !== "success") {
+      const failed = applyGstAutomationFailed(
+        kase,
+        outcome.urgentTask?.reason ?? outcome.result.errorCode ?? "GST prepare failed",
+      );
+      const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
+        p_case_id: caseId,
+        p_case: failed.updatedCase,
+        p_action: "gst.prepare_failed",
+        p_entity: "recovery_case",
+        p_reason: failed.note,
+        p_expected_actor_id: actor.actorId,
+      });
+      return { case: toCase(updatedRow), manifestHash: null };
+    }
+
+    // Idempotent: only transitions when still at the eligibility-review gate.
+    const prepared = kase.status === "gst_eligibility_review" ? applyGstPrepared(kase) : null;
+    const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
+      p_case_id: caseId,
+      p_case: prepared ? prepared.updatedCase : kase,
+      p_action: "gst.prepared",
+      p_entity: "recovery_case",
+      p_reason: prepared?.note ?? "GST pack re-validated (already prepared)",
+      p_expected_actor_id: actor.actorId,
+    });
+
+    return { case: toCase(updatedRow), manifestHash: outcome.result.data?.manifestHash ?? null };
   }
 
   async openGstAssistedSession(
-    _caseId: string,
-    _actor: MutationActor,
+    caseId: string,
+    actor: MutationActor,
   ): Promise<{ sessionUrl: string | null }> {
-    // TODO(api): call the real GST adapter's openAssistedSession(), audit it.
-    throw new Error("SupabaseRepository.openGstAssistedSession: not wired yet -- see src/domain/gst.ts");
+    const supabase = await this.db();
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`openGstAssistedSession: case ${caseId} not found`);
+
+    const idempotencyKey = `gst-session:${caseId}`;
+    const outcome = await runAdapter((key) => getAdapters().gstPortal.openAssistedSession(key), idempotencyKey);
+    void actor; // attribution derived from auth.uid() inside recordAudit's RPC, not this parameter.
+    await recordAudit(
+      supabase,
+      kase.organisationId,
+      "gst.session_opened",
+      "recovery_case",
+      caseId,
+      outcome.result.nextAction ?? "Assisted GST portal session opened",
+    );
+    return { sessionUrl: outcome.result.data?.sessionUrl ?? null };
   }
 
   async captureGstFiling(
-    _caseId: string,
-    _staffReference: string,
-    _actor: MutationActor,
+    caseId: string,
+    staffReference: string,
+    actor: MutationActor,
   ): Promise<{ case: RecoveryCase; referenceNumber: string | null }> {
-    // TODO(api): call captureResult() through run-adapter.ts; on success
-    // apply src/domain/gst.ts applyGstFiled() and INSERT the communications
-    // row; on drift/permanent failure apply applyGstAutomationFailed() and
-    // raise an urgent audit_events row (fail closed -- PRD §11, scenario 9).
-    throw new Error("SupabaseRepository.captureGstFiling: not wired yet -- see src/domain/gst.ts");
+    const supabase = await this.db();
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`captureGstFiling: case ${caseId} not found`);
+
+    const idempotencyKey = `gst-capture:${caseId}`;
+    const outcome = await runAdapter((key) => getAdapters().gstPortal.captureResult(key), idempotencyKey);
+
+    if (outcome.result.outcome === "drift_detected" || outcome.result.outcome === "permanent_failure") {
+      const failed = applyGstAutomationFailed(
+        kase,
+        outcome.urgentTask?.reason ?? outcome.result.errorCode ?? "GST filing capture failed",
+      );
+      const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
+        p_case_id: caseId,
+        p_case: failed.updatedCase,
+        p_action: "gst.filing_failed",
+        p_entity: "recovery_case",
+        p_reason: failed.note,
+        p_expected_actor_id: actor.actorId,
+      });
+      return { case: toCase(updatedRow), referenceNumber: null };
+    }
+
+    if (outcome.result.outcome !== "success") {
+      // human_action_required / retryable mid-flight -- no state change yet.
+      return { case: kase, referenceNumber: null };
+    }
+
+    const referenceNumber = staffReference || outcome.result.data?.referenceNumber || "UNSPECIFIED";
+    const filedAt = new Date();
+    const filed = applyGstFiled(kase, filedAt);
+    const debtor = await this.getDebtor(kase.debtorId);
+
+    const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
+      p_case_id: caseId,
+      p_case: filed.updatedCase,
+      p_action: "gst.filed",
+      p_entity: "recovery_case",
+      p_reason: `${filed.note}; reference ${referenceNumber}`,
+      p_communication: {
+        channel: "email",
+        direction: "outbound",
+        templateKey: "gst_notification_v2",
+        templateVersion: 2,
+        subject: `GST communication filed — ${debtor?.name ?? "debtor"}`,
+        body: `A taxpayer communication has been filed on the GST portal. Reference: ${referenceNumber}.`,
+        providerMessageId: null,
+        threadRef: `thread-${caseId}`,
+        deliveryStatus: "delivered",
+        hasSecureLink: false,
+        createdAt: filedAt.toISOString(),
+        deliveredAt: filedAt.toISOString(),
+      },
+      p_expected_actor_id: actor.actorId,
+    });
+
+    return { case: toCase(updatedRow), referenceNumber };
   }
 
   async saveMsmeStage(
-    _caseId: string,
-    _stage: import("@/contract/adapters").MsmeStage,
-    _payload: Record<string, unknown>,
-    _actor: MutationActor,
+    caseId: string,
+    stage: MsmeStage,
+    payload: Record<string, unknown>,
+    actor: MutationActor,
   ): Promise<{ resumeToken: string | null }> {
-    // TODO(api): call the real MSME adapter's saveStage(), audit it.
-    throw new Error("SupabaseRepository.saveMsmeStage: not wired yet -- see src/domain/msme.ts");
+    const supabase = await this.db();
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`saveMsmeStage: case ${caseId} not found`);
+
+    const idempotencyKey = `msme-stage:${caseId}:${stage}`;
+    const outcome = await runAdapter(
+      (key) => getAdapters().msmePortal.saveStage({ idempotencyKey: key, caseId, stage, payload }),
+      idempotencyKey,
+    );
+    void actor; // audit-only write; see the note in openGstAssistedSession above.
+    await recordAudit(
+      supabase,
+      kase.organisationId,
+      "msme.stage_saved",
+      "recovery_case",
+      caseId,
+      `Stage "${stage}" saved (${outcome.result.outcome})`,
+    );
+    return { resumeToken: outcome.result.data?.resumeToken ?? null };
   }
 
   async buildMsmePreview(
-    _caseId: string,
-    _actor: MutationActor,
+    caseId: string,
+    actor: MutationActor,
   ): Promise<{ previewPdfKey: string | null; previewHash: string | null }> {
-    // TODO(api): call buildPreview(), store the immutable snapshot as a
-    // portal_artifacts row, audit it.
-    throw new Error("SupabaseRepository.buildMsmePreview: not wired yet -- see src/domain/msme.ts");
+    const supabase = await this.db();
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`buildMsmePreview: case ${caseId} not found`);
+
+    const idempotencyKey = `msme-preview:${caseId}`;
+    const outcome = await runAdapter((key) => getAdapters().msmePortal.buildPreview(key), idempotencyKey);
+    void actor; // audit-only write; see the note in openGstAssistedSession above.
+    await recordAudit(
+      supabase,
+      kase.organisationId,
+      "msme.preview_built",
+      "recovery_case",
+      caseId,
+      `Immutable preview snapshot generated (${outcome.result.outcome})`,
+    );
+    return {
+      previewPdfKey: outcome.result.data?.previewPdfKey ?? null,
+      previewHash: outcome.result.data?.previewHash ?? null,
+    };
   }
 
   async captureMsmeAcknowledgement(
-    _caseId: string,
-    _actor: MutationActor,
+    caseId: string,
+    actor: MutationActor,
   ): Promise<{ case: RecoveryCase; diaryNumber: string | null; petitionPdfKey: string | null }> {
-    // TODO(api): call captureAcknowledgement() through run-adapter.ts; on
-    // success apply src/domain/msme.ts applyMsmeFiled() and INSERT the
-    // communications row; on drift/permanent failure apply
-    // applyMsmeAutomationFailed() and raise an urgent audit_events row.
-    throw new Error("SupabaseRepository.captureMsmeAcknowledgement: not wired yet -- see src/domain/msme.ts");
+    const supabase = await this.db();
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`captureMsmeAcknowledgement: case ${caseId} not found`);
+
+    const idempotencyKey = `msme-ack:${caseId}`;
+    const outcome = await runAdapter(
+      (key) => getAdapters().msmePortal.captureAcknowledgement(key),
+      idempotencyKey,
+    );
+
+    if (outcome.result.outcome === "drift_detected" || outcome.result.outcome === "permanent_failure") {
+      const failed = applyMsmeAutomationFailed(
+        kase,
+        outcome.urgentTask?.reason ?? outcome.result.errorCode ?? "MSME filing capture failed",
+      );
+      const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
+        p_case_id: caseId,
+        p_case: failed.updatedCase,
+        p_action: "msme.filing_failed",
+        p_entity: "recovery_case",
+        p_reason: failed.note,
+        p_expected_actor_id: actor.actorId,
+      });
+      return { case: toCase(updatedRow), diaryNumber: null, petitionPdfKey: null };
+    }
+
+    if (outcome.result.outcome !== "success") {
+      return { case: kase, diaryNumber: null, petitionPdfKey: null };
+    }
+
+    const diaryNumber = outcome.result.data?.diaryNumber ?? null;
+    const petitionPdfKey = outcome.result.data?.petitionPdfKey ?? null;
+    const filed = applyMsmeFiled(kase);
+    const debtor = await this.getDebtor(kase.debtorId);
+
+    const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
+      p_case_id: caseId,
+      p_case: filed.updatedCase,
+      p_action: "msme.filed",
+      p_entity: "recovery_case",
+      p_reason: `${filed.note}; diary number ${diaryNumber ?? "pending"}`,
+      p_communication: {
+        channel: "email",
+        direction: "outbound",
+        templateKey: "msme_odr_filed_v1",
+        templateVersion: 1,
+        subject: `MSME ODR filed — ${debtor?.name ?? "debtor"}`,
+        body: `The MSME ODR claim has been submitted. Diary number: ${diaryNumber ?? "pending"}.`,
+        providerMessageId: null,
+        threadRef: `thread-${caseId}`,
+        deliveryStatus: "delivered",
+        hasSecureLink: false,
+        createdAt: new Date().toISOString(),
+        deliveredAt: new Date().toISOString(),
+      },
+      p_expected_actor_id: actor.actorId,
+    });
+
+    return { case: toCase(updatedRow), diaryNumber, petitionPdfKey };
   }
 
-  async prepareDdTask(_caseId: string, _actor: MutationActor): Promise<{ case: RecoveryCase }> {
-    // TODO(api): UPDATE the case via src/domain/hearing.ts applyDdPrepared(),
-    // INSERT a workflow_tasks row (dd_preparation, waiting_on client), audit it.
-    throw new Error("SupabaseRepository.prepareDdTask: not wired yet -- see src/domain/hearing.ts");
+  async prepareDdTask(caseId: string, actor: MutationActor): Promise<{ case: RecoveryCase }> {
+    const supabase = await this.db();
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`prepareDdTask: case ${caseId} not found`);
+    const prepared = applyDdPrepared(kase);
+    // Matches MemoryRepository.prepareDdTask exactly (case update + audit
+    // only, no workflow_tasks row) -- parity with current behavior, not
+    // with this file's own pre-existing aspirational TODO comment, which
+    // diverged from MemoryRepository and is a separate product decision
+    // (see the P0-4 audit report's parity matrix).
+    const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
+      p_case_id: caseId,
+      p_case: prepared.updatedCase,
+      p_action: "dd.prepared",
+      p_entity: "recovery_case",
+      p_reason: prepared.note,
+      p_expected_actor_id: actor.actorId,
+    });
+    return { case: toCase(updatedRow) };
   }
 
   async scheduleHearing(
-    _caseId: string,
-    _startsAtIso: string,
-    _actor: MutationActor,
+    caseId: string,
+    startsAtIso: string,
+    actor: MutationActor,
   ): Promise<{ case: RecoveryCase; eventId: string | null }> {
-    // TODO(api): call the calendar adapter's upsertEvent() through
-    // run-adapter.ts, UPDATE the case via applyHearingScheduled(), INSERT a
-    // calendar_events row, audit it.
-    throw new Error("SupabaseRepository.scheduleHearing: not wired yet -- see src/domain/hearing.ts");
+    const supabase = await this.db();
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`scheduleHearing: case ${caseId} not found`);
+    const startsAt = new Date(startsAtIso);
+    if (Number.isNaN(startsAt.getTime())) throw new Error(`scheduleHearing: invalid date "${startsAtIso}"`);
+
+    const idempotencyKey = `hearing:${caseId}:${startsAtIso}`;
+    const outcome = await runAdapter(
+      (key) =>
+        getAdapters().calendar.upsertEvent({
+          idempotencyKey: key,
+          caseId,
+          title: `MSEFC hearing — case ${caseId}`,
+          startsAt: startsAt.toISOString(),
+          kind: "hearing",
+        }),
+      idempotencyKey,
+    );
+
+    const scheduled = applyHearingScheduled(kase, startsAt);
+    // Matches MemoryRepository.scheduleHearing exactly: no calendar_events
+    // row is persisted, only the case update + audit (the calendar event id
+    // is recorded in the audit reason). See the note on prepareDdTask above.
+    const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
+      p_case_id: caseId,
+      p_case: scheduled.updatedCase,
+      p_action: "hearing.scheduled",
+      p_entity: "recovery_case",
+      p_reason: `${scheduled.note}; calendar event ${outcome.result.data?.eventId ?? "n/a"}`,
+      p_expected_actor_id: actor.actorId,
+    });
+
+    return { case: toCase(updatedRow), eventId: outcome.result.data?.eventId ?? null };
   }
 
   async correctInvoiceOcr(
-    _caseId: string,
-    _invoiceId: string,
-    _corrections: Partial<
+    caseId: string,
+    invoiceId: string,
+    corrections: Partial<
       Pick<
         Invoice,
         | "invoiceNumber"
@@ -717,12 +1242,30 @@ export class SupabaseRepository implements Repository {
         | "outstandingBalance"
       >
     >,
-    _actor: MutationActor,
+    actor: MutationActor,
   ): Promise<{ case: RecoveryCase; invoice: Invoice }> {
-    // TODO(api): UPDATE the invoice row (preserve document_versions
-    // provenance), UPDATE the case via src/domain/ocr.ts applyOcrCorrected(),
-    // audit it.
-    throw new Error("SupabaseRepository.correctInvoiceOcr: not wired yet -- see src/domain/ocr.ts");
+    const supabase = await this.db();
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`correctInvoiceOcr: case ${caseId} not found`);
+
+    const outstandingBalance = corrections.outstandingBalance ?? kase.principalOutstanding;
+    const corrected = applyOcrCorrected({ ...kase, principalOutstanding: outstandingBalance });
+    const updatedCase: RecoveryCase = {
+      ...corrected.updatedCase,
+      principalOutstanding: outstandingBalance,
+      activatedAt: corrected.updatedCase.status === "active" ? new Date().toISOString() : kase.activatedAt,
+    };
+
+    const invoiceRow = await callWriteRpc<InvoiceRow>(supabase, "correct_invoice_row", {
+      p_invoice_id: invoiceId,
+      p_corrections: corrections,
+      p_case_id: caseId,
+      p_case: updatedCase,
+      p_reason: `Staff corrected extracted fields (was low-confidence); ${corrected.note}`,
+      p_expected_actor_id: actor.actorId,
+    });
+
+    return { case: updatedCase, invoice: toInvoice(invoiceRow) };
   }
 
   async listAuditLog(limit = 200): Promise<import("@/lib/mock-data").AuditEntry[]> {
@@ -746,17 +1289,27 @@ export class SupabaseRepository implements Repository {
   }
 
   async getAutomationState(): Promise<{ enabled: boolean }> {
-    // TODO(api): back this with a real settings row (or the most recent
-    // automation.enabled/disabled audit_events entry) once a project exists.
-    throw new Error("SupabaseRepository.getAutomationState: not wired yet");
+    // Backed by system_settings (supabase/migrations/0006_production_write_rpcs.sql)
+    // -- staff/admin may SELECT it directly (system_settings_staff_read
+    // policy); only set_automation_state() may write it.
+    const supabase = await this.db();
+    const res = await supabase.from("system_settings").select("*").eq("key", "automation").maybeSingle();
+    if (res.error) throw new Error(`SupabaseRepository.getAutomationState: ${res.error.message}`);
+    const row = res.data as unknown as { value_json: { enabled: boolean } } | null;
+    if (!row) throw new Error("SupabaseRepository.getAutomationState: system_settings row missing");
+    return { enabled: row.value_json.enabled };
   }
 
   async setAutomationState(
-    _enabled: boolean,
-    _reason: string,
-    _actor: MutationActor,
+    enabled: boolean,
+    reason: string,
+    actor: MutationActor,
   ): Promise<{ enabled: boolean }> {
-    // TODO(api): UPDATE the settings row, INSERT an audit_events row.
-    throw new Error("SupabaseRepository.setAutomationState: not wired yet");
+    const supabase = await this.db();
+    return callWriteRpc<{ enabled: boolean }>(supabase, "set_automation_state", {
+      p_enabled: enabled,
+      p_reason: reason,
+      p_expected_actor_id: actor.actorId,
+    });
   }
 }

@@ -15,6 +15,11 @@ import { ForbiddenError, UnauthenticatedError } from "@/lib/auth/types";
 import { getRepo } from "@/server/repo";
 import * as mock from "@/lib/mock-data";
 
+// The real `server-only` package unconditionally throws when required
+// directly outside webpack's client/server aliasing (see
+// src/lib/auth/session.test.ts for the same note) -- repo.ts and
+// src/lib/config/production.ts both import it.
+vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const authorizeStaffMutation = vi.fn();

@@ -173,6 +173,16 @@ export interface AuditEventRow {
   created_at: string;
 }
 
+/** Global settings, key-value (supabase/migrations/0006_production_write_rpcs.sql).
+ * Currently one row, key='automation' -- backs the automation kill switch.
+ * Readable by staff/admin directly; writable only via set_automation_state(). */
+export interface SystemSettingsRow {
+  key: string;
+  value_json: Record<string, unknown>;
+  updated_at: string;
+  updated_by: Nullable<string>;
+}
+
 interface TableShape<Row, InsertOptional extends keyof Row> {
   Row: Row;
   Insert: WithDefaults<Row, InsertOptional>;
@@ -224,6 +234,7 @@ export interface Database {
         "id" | "created_at" | "client_confirmed"
       >;
       audit_events: TableShape<AuditEventRow, "id" | "created_at">;
+      system_settings: TableShape<SystemSettingsRow, "updated_at" | "updated_by">;
     };
     Views: Record<string, never>;
     Functions: {
@@ -241,6 +252,71 @@ export interface Database {
           p_metadata_json: Record<string, unknown> | null;
         };
         Returns: AuditEventRow;
+      };
+      /** supabase/migrations/0006_production_write_rpcs.sql -- admin-only;
+       * checked inside the function (current_user_role() = 'admin'), not
+       * just at the application layer. */
+      set_automation_state: {
+        Args: { p_enabled: boolean; p_reason: string; p_expected_actor_id?: string | null };
+        Returns: { enabled: boolean };
+      };
+      /** Updates one recovery_cases row, optionally inserts one
+       * communications row, and audits it -- atomically. p_case carries the
+       * full post-transition case object (every RecoveryCase field always
+       * present, computed by the matching src/domain/*.ts pure function). */
+      apply_case_mutation: {
+        Args: {
+          p_case_id: string;
+          p_case: Record<string, unknown>;
+          p_action: string;
+          p_entity: string;
+          p_reason: string | null;
+          p_communication?: Record<string, unknown> | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: RecoveryCaseRow;
+      };
+      record_payment_row: {
+        Args: {
+          p_case_id: string;
+          p_kind: string;
+          p_amount: number;
+          p_reference: string | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: PaymentRecordRow;
+      };
+      apply_payment_confirmation: {
+        Args: {
+          p_payment_id: string;
+          p_case: Record<string, unknown>;
+          p_invoice_updates: { id: string; outstandingBalance: number }[];
+          p_reason: string | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: RecoveryCaseRow;
+      };
+      correct_invoice_row: {
+        Args: {
+          p_invoice_id: string;
+          p_corrections: Record<string, unknown>;
+          p_case_id: string;
+          p_case: Record<string, unknown>;
+          p_reason: string | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: InvoiceRow;
+      };
+      create_case_from_invoice: {
+        Args: {
+          p_organisation_id: string;
+          p_debtor: Record<string, unknown>;
+          p_case: Record<string, unknown>;
+          p_invoice: Record<string, unknown>;
+          p_reason: string | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: { case: RecoveryCaseRow; invoice: InvoiceRow; debtor: DebtorRow };
       };
     };
     Enums: {
