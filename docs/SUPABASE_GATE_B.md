@@ -1,10 +1,37 @@
 # Supabase Gate B — execution record
 
-Status: **CORE VERIFICATION COMPLETE.** Migrations, RLS, RPCs, audit chain,
-and every requested attack scenario were exercised live against a real
-Supabase project with real authenticated sessions. OAuth/browser-cookie
-integration and India-region residency remain open (see below) — Gate B is
-not the same thing as "production-ready."
+Status: **CORE VERIFICATION COMPLETE, DIRECT-TABLE-WRITE AUDIT BYPASS
+CLOSED (R3).** Migrations, RLS, RPCs, audit chain, and every requested
+attack scenario were exercised live against a real Supabase project with
+real authenticated sessions. OAuth/browser-cookie integration and
+India-region residency remain open (see below) — Gate B is not the same
+thing as "production-ready."
+
+## R3: direct-table-write audit bypass — CLOSED
+
+`0011_close_direct_write_bypass.sql` removes staff's (and, where it
+existed, admin's) `FOR ALL` direct-write RLS policy on every table with
+audited-RPC coverage or no current app-level write usage, replacing it with
+a read-only policy, and additionally revokes INSERT/UPDATE/DELETE at the
+table-grant level from `anon`/`authenticated` (defense in depth — RLS
+policy alone was already sufficient, but the table-level revoke closes it
+even against a future policy-authoring mistake). See that migration's
+header for the full root-cause explanation and the three documented,
+intentional exceptions (`documents`/`document_versions`/`payment_records`
+client-insert; `notifications` recipient-scoped mark-as-read).
+
+**Live-confirmed, 120 passing assertions, 0 failures** (full regression
+suite, this session): every fully-RPC-only table denies a direct staff
+INSERT; `recovery_cases`, `invoices`, `payment_records`, `organisations`,
+and `app_users`/`user_organisations` (role/membership) each individually
+proven: direct write denied + zero audit row produced, immediately followed
+by the same business mutation succeeding through its RPC with exactly one
+audit row created. Read access (staff cross-org, client tenant-scoped)
+fully preserved and re-confirmed. Client document upload (the one
+legitimate direct-write exception) re-confirmed still working. Every R2
+regression (visibility matrix, cross-tenant attacks, self-escalation,
+forged membership, all 8 RPCs, payment concurrency, transaction rollback,
+audit hash chain) re-run and still passes.
 
 ## Live project
 
@@ -22,10 +49,14 @@ not the same thing as "production-ready."
 
 `0001_init.sql`, `0002_rls.sql`, `0004_tenant_consistency.sql`,
 `0005_privileged_audit_writer.sql`, `0006_production_write_rpcs.sql`,
-`0007_gate_b_hardening.sql`, `0010_gate_b_digest_schema_fix.sql` — applied
-via `supabase db push --linked`, confirmed via `supabase migration list`
-(local matches remote for every one; `supabase db push --linked --dry-run`
-reports "Remote database is up to date").
+`0007_gate_b_hardening.sql`, `0010_gate_b_digest_schema_fix.sql`,
+`0011_close_direct_write_bypass.sql` — applied via `supabase db push
+--linked`, confirmed via `supabase migration list` (local matches remote
+for every one; `supabase db push --linked --dry-run` reports "Remote
+database is up to date"; `supabase db push --linked --include-seed
+--dry-run` correctly shows it would apply `supabase/seed.sql` and
+nothing else -- confirming a fresh production database that only ever runs
+plain `db push` never receives demo data, structurally, not by convention).
 
 `supabase/seed.sql` (formerly `migrations/0003_seed.sql` — see
 `docs/adr/0002-seed-data-is-not-a-migration.md`) was applied once, manually,
@@ -92,32 +123,59 @@ that.
   delete via the Dashboard SQL Editor, e.g.
   `delete from app_users where id = '<uuid>';` per identity, plus the
   matching `user_organisations` rows for the two client identities).
-- **Test-created business rows**: several payments (`gate-b-*-test`
-  references), one document, and one case field correction created during
-  the RPC test matrix, all on Acme's seed cases. Harmless, clearly labeled,
-  on fictional demo data.
-- **Test-created audit_events rows** (`gate_b.*`-prefixed actions and
+- **Test-created business rows**: several payments (`gate-b-*-test` /
+  `r3-*` references), a couple of documents, and a few case/invoice field
+  corrections created across the R2 and R3 test matrices, all on Acme's
+  seed cases. Harmless, clearly labeled, on fictional demo data.
+- **Test-created audit_events rows** (`gate_b.*`/`r3.*`-prefixed actions and
   reasons): these **cannot** be deleted (audit_events has no delete policy
   for any role, by design — confirmed live: not even admin could delete one
   during testing) and **should not** be deleted even if a superuser path
   existed, since that would defeat the append-only guarantee this whole
   system exists to provide. They remain, correctly, as a permanent record.
-- **One test organisation** (`client_code = 'GATEB-OK'`, from the live
-  `create_organisation` RPC test): a cleanup attempt was made and **failed**
-  — `audit_events.organisation_id` has a real foreign-key constraint to
-  `organisations(id)`, so deleting the organisation without first deleting
-  its (undeletable, by design) audit row is impossible. This is correct,
-  intentional schema behavior, not a bug: it structurally guarantees no
-  audit_events row can ever reference a deleted organisation, at the cost of
-  making this one harmless test row permanent on this project. Recognizable
-  by its name ("Gate B RPC Test Org") and client code.
+- **Two test organisations**: `client_code = 'GATEB-OK'` (R2) and one
+  `GATEB-R3-*`-coded org (R3, created to re-prove `create_organisation`
+  still works post-hardening). Both are **permanently stuck** on this
+  project for the same reason:
+
+  **Cleanup semantics, stated precisely** (distinguishing the two senses of
+  "can't delete"):
+  - *Deletion is prohibited through the normal application/audit rules*:
+    no RLS policy, for any role including admin, permits deleting an
+    `audit_events` row, and `organisations` cannot be deleted while any
+    `audit_events` row still references it (`audit_events_organisation_id_fkey`,
+    a real foreign key) — reproduced live by an actual attempted cleanup
+    migration that failed with `SQLSTATE 23503`. This is the *intended*,
+    correct behavior of this schema, not a bug or an oversight: it makes
+    it structurally impossible for an audit trail to reference a deleted
+    organisation.
+  - *Deletion is technically possible only via privileged DB
+    administration* — a superuser session (the Dashboard SQL Editor, or a
+    migration) could `DELETE FROM audit_events WHERE ...` before deleting
+    the organisation, exactly like any other DDL/DML this project's
+    migrations already perform with elevated privilege. This was
+    **deliberately not done**: erasing audit rows to tidy up a test
+    project is exactly the kind of "delete inconvenient audit history"
+    action the whole system exists to make hard, and doing it here — even
+    for harmless fictional test data — would set precedent for treating
+    the append-only guarantee as negotiable. If this project's test data
+    ever needs a full wipe, the correct procedure is provisioning a fresh
+    Supabase project and re-running the (production) migration chain, not
+    surgically deleting rows from this one.
+
+  Recognizable by name ("Gate B RPC Test Org", "R3 Regression Org") and
+  client code prefix (`GATEB-*`).
 
 None of this affects a fresh production database in any way — it is entirely
 contained to this one live Gate B project. See `docs/DEPLOYMENT.md` for the
 production provisioning path, which starts from an empty database and never
 touches any of the above.
 
-## Live-verified test matrix (2026-09-13, real sessions, real HTTP calls — not mocks)
+## Live-verified test matrix — R2 baseline (2026-09-13, real sessions, real HTTP calls — not mocks)
+
+(This section is the original R2 record, re-run and still passing after
+R3's hardening — see "R3: direct-table-write audit bypass — CLOSED" above
+for the additional R3-specific test matrix and its own pass count.)
 
 61 assertions across 8 test scripts, 0 failures (after fixing two of this
 session's own test-script bugs — two assertions initially expected HTTP 401

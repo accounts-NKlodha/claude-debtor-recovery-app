@@ -39,11 +39,14 @@ A migration file replays automatically on every fresh database via
   procedure is a doc with a *template* statement; the operator fills in the
   real values by hand, in the Dashboard, and nothing from that session gets
   committed to the repository.
-- **Ordinary staff still cannot elevate themselves.** This procedure
-  doesn't touch that guarantee — `0007`'s `app_users_admin_all` /
-  `app_users_staff_read` policies stay exactly as they are. This runbook is
-  the one sanctioned exception, exercised outside RLS entirely (via the
-  Dashboard's own privileged connection), not a hole in RLS.
+- **Ordinary staff still cannot elevate themselves -- and, as of
+  `0011_close_direct_write_bypass.sql`, an ordinary admin session cannot
+  write `app_users` directly either** (`app_users_admin_all` was replaced
+  with `app_users_admin_read`; both staff and admin are read-only on
+  `app_users` through the application's own authenticated session). This
+  runbook is the *only* sanctioned way to write that table at all, and it
+  is exercised entirely outside RLS (via the Dashboard's own privileged
+  connection), not a hole in RLS.
 - **Does not require weakening RLS.** The Dashboard SQL Editor (and direct
   `psql` access with the database password) already bypasses RLS by design
   — that is Supabase's own project-owner channel, separate from the
@@ -88,10 +91,12 @@ A migration file replays automatically on every fresh database via
 
 Once at least one admin exists, `docs/DEPLOYMENT.md`'s existing guidance
 still applies: there is no self-serve signup by design (PRD access model).
-Every additional `app_users` row is provisioned the same way — an admin (or
-project owner) inserting the row, now that an admin identity exists to do it
-through a to-be-built admin-facing provisioning action, or via the same
-Dashboard SQL Editor path as step 3 above in the interim. Building an actual
-in-app "invite/provision user" admin action is future work (not part of
-Gate B, not started here) — track it as a follow-up rather than assuming the
-Dashboard path is the permanent mechanism for routine staff onboarding.
+As of `0011_close_direct_write_bypass.sql`, there is no ordinary
+authenticated-session write path to `app_users`/`user_organisations` at
+all, for any role -- the Dashboard SQL Editor procedure in step 3 above
+(a project owner, using Supabase's privileged connection, not the
+application) is the *only* mechanism until an in-app "invite/provision
+user" admin action is built. That action is future work (not part of Gate
+B, not started here, and deliberately not restored as a workaround for
+this task) — track it as a follow-up rather than treating the Dashboard
+path as the permanent mechanism for routine staff onboarding.

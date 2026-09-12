@@ -13,6 +13,7 @@ Gate B, 2026-09-13):** 0001, 0002, 0004, 0005, 0006, 0007 apply cleanly via
 | `migrations/0006_production_write_rpcs.sql` | `system_settings` table (backs the automation kill switch) + the atomic multi-table write RPCs every mutating `Repository` method uses (`apply_case_mutation`, `record_payment_row`, `apply_payment_confirmation`, `correct_invoice_row`, `create_case_from_invoice`, `create_organisation`, `set_automation_state`). |
 | `migrations/0007_gate_b_hardening.sql` | Fixes three live-verified findings: `app_users` no longer grants ordinary staff write access (was a self-escalation-to-admin path), `apply_payment_confirmation` now locks the payment row and rejects a second confirmation (was a double-application risk), and invoice updates in that function and `correct_invoice_row` are now constrained to the target case, not just the organisation. |
 | `migrations/0010_gate_b_digest_schema_fix.sql` | Fixes a live-only finding: `record_audit_event()` called `digest()` unqualified; Supabase-hosted Postgres installs `pgcrypto` into the `extensions` schema, not `public`, so every `SECURITY DEFINER` function's deliberately-pinned `search_path = public` made it unresolvable -- every RPC that writes an audit row (all of them) failed the first time any of them actually ran. Fixed by schema-qualifying the call (`extensions.digest`) rather than widening `search_path`. |
+| `migrations/0011_close_direct_write_bypass.sql` | Closes the live-confirmed direct-table-write audit bypass: staff (and, on `app_users`/`user_organisations`, admin) had `FOR ALL` direct-write RLS access alongside the audited RPCs, so a Data-API call could mutate business tables with zero audit trail. Replaces every such policy with read-only, and revokes INSERT/UPDATE/DELETE at the table-grant level too. Three documented exceptions: `documents`/`document_versions`/`payment_records` keep client-insert (PRD-required, already role-scoped), `notifications` keeps recipient-scoped mark-as-read. |
 
 **`seed.sql` is not a migration** (see `docs/adr/0002-seed-data-is-not-a-migration.md`).
 Fixed-UUID demo data for three fictional companies lives in `supabase/seed.sql`,
@@ -60,6 +61,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f supabase/migrations/0005_privilege
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f supabase/migrations/0006_production_write_rpcs.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f supabase/migrations/0007_gate_b_hardening.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f supabase/migrations/0010_gate_b_digest_schema_fix.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f supabase/migrations/0011_close_direct_write_bypass.sql
 # Demo/test data only -- never against a production database:
 # psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f supabase/seed.sql
 ```
@@ -114,6 +116,20 @@ select set_config('request.jwt.claims',
    affects 0 rows; `insert into communications (...) ...` is rejected by RLS;
    `update audit_events ...` and `delete from audit_events ...` are rejected
    for every role.
+
+4a. **Staff/admin cannot mutate business tables directly either
+   (post-`0011`, closes the direct-table-write audit bypass).** As `...11`
+   (staff): `update recovery_cases set blocker='hack' where id='..0031';` is
+   rejected at the table-grant level (`permission denied for table
+   recovery_cases`), not just by RLS -- confirmed identical for `invoices`,
+   `debtors`, `payment_records`, `organisations`, `communications`, and
+   every other table `0011` locks down. The same mutation through
+   `apply_case_mutation(...)` still succeeds and creates exactly one
+   `audit_events` row. Admin's equivalent direct write to `app_users` (role
+   changes) is denied the same way -- the only sanctioned write paths left
+   are the audited RPCs and the Dashboard SQL Editor bootstrap procedure
+   (`docs/ADMIN_BOOTSTRAP.md`), neither of which goes through an ordinary
+   authenticated session's own Data-API grants.
 
 5. **Client write surfaces work.**
    As `...13`: `insert into documents (...)` and
