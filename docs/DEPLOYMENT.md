@@ -32,10 +32,36 @@ ADAPTER_PROFILE=mock                          # switch to "live" once providers 
 psql "$DATABASE_URL" -f supabase/migrations/0001_init.sql
 psql "$DATABASE_URL" -f supabase/migrations/0002_rls.sql
 # 0003_seed is demo data — run ONLY in staging, never production
+psql "$DATABASE_URL" -f supabase/migrations/0004_tenant_consistency.sql
+psql "$DATABASE_URL" -f supabase/migrations/0005_privileged_audit_writer.sql
 ```
 
 Verify RLS with the plan in `supabase/README.md` (acceptance scenario 12: a client
 identity cannot read another organisation's rows).
+
+### Authentication (P0-1/P0-2 foundation)
+
+Code-side (`src/lib/auth/`, `src/proxy.ts`) is complete and unit-tested
+(`src/lib/auth/context.test.ts`) without needing a live project. What's still
+required before staff/client sign-in actually works in production:
+
+1. In the Supabase project's Auth settings, enable the **Google** OAuth
+   provider and set the redirect URL to `https://debtor.nklodha.in/auth/callback`.
+2. Register that provider + redirect URL as an OAuth client in Google Cloud
+   Console; put the client ID/secret into Supabase's Google provider config
+   (not into this app's env — Supabase holds them).
+3. Build the actual `/sign-in` "Continue with Google" action and the
+   `/auth/callback` route handler that exchanges the OAuth code for a
+   session (`supabase.auth.exchangeCodeForSession`) — both are stubbed out
+   pending these credentials; see `src/app/sign-in/page.tsx`.
+4. Provision real `app_users` / `user_organisations` rows for every staff
+   member and client contact (there is no self-serve signup flow by design —
+   PRD access model).
+5. Once (1)-(4) exist, set `NODE_ENV=production` and confirm: an
+   unauthenticated request to any internal/client route redirects to
+   `/sign-in` (enforced today by `src/proxy.ts`), and a signed-in client
+   only ever sees their own organisation's data (enforced by RLS + 
+   `src/lib/auth/session.ts#resolveClientOrganisationId`).
 
 ## 4. Build & run
 

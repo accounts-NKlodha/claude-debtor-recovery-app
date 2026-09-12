@@ -39,6 +39,23 @@ export interface OrganisationRow {
   created_at: string;
 }
 
+/** Mirrors an auth.users row via id (auth.uid()) -- see supabase/migrations/0001_init.sql. */
+export interface AppUserRow {
+  id: string;
+  role: UserRole;
+  email: Nullable<string>;
+  mobile: Nullable<string>;
+  display_name: string;
+  created_at: string;
+}
+
+/** Multi-org client identities (PRD §4). */
+export interface UserOrganisationRow {
+  user_id: string;
+  organisation_id: string;
+  created_at: string;
+}
+
 export interface DebtorRow {
   id: string;
   organisation_id: string;
@@ -166,6 +183,8 @@ export interface Database {
   public: {
     Tables: {
       organisations: TableShape<OrganisationRow, "id" | "created_at" | "jito_member" | "is_firm">;
+      app_users: TableShape<AppUserRow, "id" | "created_at">;
+      user_organisations: TableShape<UserOrganisationRow, "created_at">;
       debtors: TableShape<
         DebtorRow,
         "id" | "created_at" | "updated_at" | "contact_verified" | "total_due"

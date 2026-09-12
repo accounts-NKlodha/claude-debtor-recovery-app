@@ -8,16 +8,17 @@ import { RecoveryTrend } from "@/components/charts/recovery-trend";
 import { AgeingBars } from "@/components/charts/ageing-bars";
 import { StageFunnel } from "@/components/charts/stage-funnel";
 import { getRepo } from "@/server/repo";
+import { resolveClientOrganisationId } from "@/lib/auth/session";
 import { CLIENT_SAFE_LABEL } from "@/contract/enums";
 import { formatInr, formatInrCompact } from "@/lib/utils";
 
 export const metadata = { title: "Overview — Debtrecover" };
 
-// TODO(api): scope to the signed-in client's selected organisation once auth lands.
 export default async function ClientOverviewPage() {
   const repo = getRepo();
   const orgs = await repo.listOrganisations();
-  const org = orgs[0];
+  const organisationId = await resolveClientOrganisationId(orgs);
+  const org = orgs.find((o) => o.id === organisationId) ?? orgs[0];
   const [overview, cases, trend, stageFunnel] = await Promise.all([
     repo.clientOverview(org.id),
     repo.listCasesForOrg(org.id),
