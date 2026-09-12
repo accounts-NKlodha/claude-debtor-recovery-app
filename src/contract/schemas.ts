@@ -78,9 +78,11 @@ export const debtorSchema = z.object({
 });
 
 /**
- * Onboarding a new client organisation (PRD §4 tenancy). Demo-only until
- * Phase 1 staff/admin authentication and authorization exist -- see the
- * production guard in src/app/actions/organisations.ts.
+ * Onboarding a new client organisation (PRD §4 tenancy). Admin-only in
+ * production -- see src/app/actions/organisations.ts for why (P0-1/P0-2-R2:
+ * the product brief scopes staff to operating existing cases, and this
+ * creates a new tenant/billing relationship, closer to Admin's
+ * "Configuration" responsibility).
  *
  * `confirmDuplicateName` + `duplicateOverrideReason` support a two-step
  * flow: a legal-entity-name collision (case/whitespace-insensitive) with an

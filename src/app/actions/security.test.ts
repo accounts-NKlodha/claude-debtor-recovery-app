@@ -142,9 +142,9 @@ describe("setAutomationStateAction: admin-only privileged path (real entry point
   });
 });
 
-describe("createOrganisationAction (real entry point) -- create is attributed to the authenticated actor", () => {
+describe("createOrganisationAction (real entry point): admin-only (P0-1/P0-2-R2)", () => {
   it("rejects when unauthenticated, before any validation or persistence runs", async () => {
-    authorizeStaffMutation.mockRejectedValue(new UnauthenticatedError());
+    authorizeAdminMutation.mockRejectedValue(new UnauthenticatedError());
     const { createOrganisationAction } = await import("./organisations");
     const before = mock.ORGANISATIONS.length;
 
@@ -152,8 +152,35 @@ describe("createOrganisationAction (real entry point) -- create is attributed to
     expect(mock.ORGANISATIONS.length).toBe(before);
   });
 
-  it("attributes the created organisation's audit entry to the session actor", async () => {
-    authorizeStaffMutation.mockResolvedValue(STAFF_A);
+  it("rejects an insufficiently-privileged staff actor -- ordinary staff cannot onboard a new client", async () => {
+    authorizeAdminMutation.mockRejectedValue(new ForbiddenError("Admin session required"));
+    const { createOrganisationAction } = await import("./organisations");
+    const before = mock.ORGANISATIONS.length;
+
+    await expect(
+      createOrganisationAction({
+        clientCode: "NKL-DENY1",
+        legalEntityName: "Should Not Be Created Pvt Ltd",
+        creditorGstin: null,
+        udyamNumber: null,
+        jitoMember: false,
+        confirmDuplicateName: false,
+        duplicateOverrideReason: null,
+      }),
+    ).rejects.toThrow(ForbiddenError);
+    expect(mock.ORGANISATIONS.length).toBe(before); // no side effect happened
+  });
+
+  it("calls authorizeAdminMutation, never the weaker authorizeStaffMutation -- a browser cannot get itself treated as staff-sufficient here", async () => {
+    authorizeAdminMutation.mockRejectedValue(new ForbiddenError("Admin session required"));
+    const { createOrganisationAction } = await import("./organisations");
+
+    await expect(createOrganisationAction({ garbage: true })).rejects.toThrow();
+    expect(authorizeStaffMutation).not.toHaveBeenCalled();
+  });
+
+  it("succeeds for an authorized admin and attributes the created organisation's audit entry to them", async () => {
+    authorizeAdminMutation.mockResolvedValue(STAFF_B);
     const { createOrganisationAction } = await import("./organisations");
 
     const result = await createOrganisationAction({
@@ -169,7 +196,33 @@ describe("createOrganisationAction (real entry point) -- create is attributed to
     if (result.status !== "created") throw new Error("unreachable");
 
     const audit = (await getRepo().listAuditLog(20)).find((a) => a.entityId === result.organisation.id);
-    expect(audit?.actorId).toBe(STAFF_A.actorId);
+    expect(audit?.actorId).toBe(STAFF_B.actorId);
+  });
+
+  it("a submitted input carrying a role-like field cannot elevate privilege -- the schema has no role/actor field at all", async () => {
+    authorizeAdminMutation.mockResolvedValue(STAFF_B);
+    const { createOrganisationAction } = await import("./organisations");
+
+    const result = await createOrganisationAction({
+      clientCode: `NKL-R${Date.now().toString().slice(-6)}`,
+      legalEntityName: "Role Injection Attempt Pvt Ltd",
+      creditorGstin: null,
+      udyamNumber: null,
+      jitoMember: false,
+      confirmDuplicateName: false,
+      duplicateOverrideReason: null,
+      // Attacker-supplied fields a naive implementation might trust:
+      role: "admin",
+      actorId: "attacker-forged-id",
+      actorRole: "admin",
+    } as never);
+
+    expect(result.status).toBe("created");
+    if (result.status !== "created") throw new Error("unreachable");
+    const audit = (await getRepo().listAuditLog(20)).find((a) => a.entityId === result.organisation.id);
+    // Attribution still comes from the (mocked) session actor, not the payload.
+    expect(audit?.actorId).toBe(STAFF_B.actorId);
+    expect(audit?.actorId).not.toBe("attacker-forged-id");
   });
 });
 
