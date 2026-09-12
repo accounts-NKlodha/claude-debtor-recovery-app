@@ -26,6 +26,7 @@ import { getAdapters } from "@/adapters";
 import { gstComposeSchema, type GstComposeInput, type ManualInvoiceInput } from "@/contract/schemas";
 import type { MsmeStage } from "@/contract/adapters";
 import type { Communication, Invoice, PaymentRecord, RecoveryCase } from "@/contract/types";
+import type { MutationActor } from "@/lib/auth/types";
 import type {
   AgeingBucket,
   CreateOrganisationResult,
@@ -63,6 +64,7 @@ export class MemoryRepository implements Repository {
 
   async createOrganisation(
     input: import("@/contract/schemas").CreateOrganisationInput,
+    actor: MutationActor,
   ): Promise<CreateOrganisationResult> {
     if (mock.findOrgByClientCode(input.clientCode)) {
       throw new Error(`createOrganisation: client code "${input.clientCode}" is already in use`);
@@ -102,6 +104,8 @@ export class MemoryRepository implements Repository {
           `staff confirmed this is distinct from existing client ${nameCollision.clientCode}; ` +
           `override reason: ${input.duplicateOverrideReason}`
         : `New client onboarded: ${organisation.legalEntityName} (${organisation.clientCode})`,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
     return tick({ status: "created", organisation });
   }
@@ -168,7 +172,11 @@ export class MemoryRepository implements Repository {
     return tick(mock.clientOverview(orgId));
   }
 
-  async createCaseFromManualInvoice(organisationId: string, input: ManualInvoiceInput) {
+  async createCaseFromManualInvoice(
+    organisationId: string,
+    input: ManualInvoiceInput,
+    actor: MutationActor,
+  ) {
     const org = mock.getOrg(organisationId);
     if (!org) throw new Error(`createCaseFromManualInvoice: organisation ${organisationId} not found`);
 
@@ -248,6 +256,8 @@ export class MemoryRepository implements Repository {
       entity: "recovery_case",
       entityId: caseId,
       reason: `Draft case created from manual invoice entry -- ${transitions.map((t) => t.note).join("; ")}`,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
 
     return tick({ case: kase, invoice, debtor });
@@ -258,7 +268,7 @@ export class MemoryRepository implements Repository {
     return tick(validateImport(csvText, { knownInvoiceKeys: known }));
   }
 
-  async commitBulkImport(organisationId: string, csvText: string) {
+  async commitBulkImport(organisationId: string, csvText: string, actor: MutationActor) {
     const org = mock.getOrg(organisationId);
     if (!org) throw new Error(`commitBulkImport: organisation ${organisationId} not found`);
 
@@ -277,18 +287,22 @@ export class MemoryRepository implements Repository {
       const dueDate = cell("due_date") ? parseDate(cell("due_date")) : null;
       const totalDue = parseMoney(cell("total_due")) ?? row.totalDue;
 
-      await this.createCaseFromManualInvoice(organisationId, {
-        debtorName: cell("debtor_name"),
-        debtorGstin: cell("debtor_gstin") || null,
-        invoiceNumber: cell("invoice_number"),
-        invoiceDate,
-        dueDate,
-        taxableValue: parseMoney(cell("taxable_value")) ?? 0,
-        taxRate: Number(cell("tax_rate")) || 0,
-        taxAmount: parseMoney(cell("tax_amount")) ?? 0,
-        invoiceTotal: parseMoney(cell("invoice_total")) ?? totalDue,
-        outstandingBalance: totalDue,
-      });
+      await this.createCaseFromManualInvoice(
+        organisationId,
+        {
+          debtorName: cell("debtor_name"),
+          debtorGstin: cell("debtor_gstin") || null,
+          invoiceNumber: cell("invoice_number"),
+          invoiceDate,
+          dueDate,
+          taxableValue: parseMoney(cell("taxable_value")) ?? 0,
+          taxRate: Number(cell("tax_rate")) || 0,
+          taxAmount: parseMoney(cell("tax_amount")) ?? 0,
+          invoiceTotal: parseMoney(cell("invoice_total")) ?? totalDue,
+          outstandingBalance: totalDue,
+        },
+        actor,
+      );
       casesCreated++;
     }
 
@@ -297,18 +311,23 @@ export class MemoryRepository implements Repository {
       entity: "organisation",
       entityId: organisationId,
       reason: `${casesCreated} draft case(s) created from ${result.validRows} valid row(s) -- ${result.duplicateRows} duplicate, ${result.errorRows} error row(s) skipped (never partially activated)`,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
 
     return tick({ result, casesCreated });
   }
 
-  async recordPayment(input: {
-    caseId: string;
-    kind: PaymentRecord["kind"];
-    amount: number;
-    reference: string | null;
-    clientConfirmed: boolean;
-  }) {
+  async recordPayment(
+    input: {
+      caseId: string;
+      kind: PaymentRecord["kind"];
+      amount: number;
+      reference: string | null;
+      clientConfirmed: boolean;
+    },
+    actor: MutationActor,
+  ) {
     const payment: PaymentRecord = {
       id: `pay-${nanoid(8)}`,
       caseId: input.caseId,
@@ -326,16 +345,18 @@ export class MemoryRepository implements Repository {
       entity: "payment_record",
       entityId: payment.id,
       reason: `${input.kind} receipt of ${input.amount} paise recorded for case ${input.caseId}`,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
 
     if (!input.clientConfirmed) return tick({ payment, updatedCase: null });
 
-    const { updatedCase } = await this.confirmPayment(payment.id);
+    const { updatedCase } = await this.confirmPayment(payment.id, actor);
     const confirmed = mock.PAYMENTS.find((p) => p.id === payment.id)!;
     return tick({ payment: confirmed, updatedCase });
   }
 
-  async confirmPayment(paymentId: string) {
+  async confirmPayment(paymentId: string, actor: MutationActor) {
     const payment = mock.markPaymentConfirmed(paymentId);
     const kase = mock.getCase(payment.caseId);
     if (!kase) throw new Error(`confirmPayment: case ${payment.caseId} not found`);
@@ -356,12 +377,14 @@ export class MemoryRepository implements Repository {
       entity: "recovery_case",
       entityId: kase.id,
       reason: result.note,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
 
     return tick({ payment, updatedCase });
   }
 
-  async sendInitialReminder(caseId: string) {
+  async sendInitialReminder(caseId: string, actor: MutationActor) {
     const kase = mock.getCase(caseId);
     if (!kase) throw new Error(`sendInitialReminder: case ${caseId} not found`);
     if (kase.status !== "active") {
@@ -425,6 +448,8 @@ export class MemoryRepository implements Repository {
         entity: "recovery_case",
         entityId: caseId,
         reason: `${sendOutcome.urgentTask?.reason ?? sendOutcome.result.errorCode ?? "adapter failure"} -- ${failed.note}`,
+        actorId: actor.actorId,
+        actorRole: actor.actorRole,
       });
       return tick({ case: updatedCase, communication });
     }
@@ -448,12 +473,14 @@ export class MemoryRepository implements Repository {
       entity: "recovery_case",
       entityId: caseId,
       reason: `${sent.note}; ${delivered.note}`,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
 
     return tick({ case: updatedCase, communication: deliveredCommunication });
   }
 
-  async prepareGstNotification(caseId: string, input: GstComposeInput) {
+  async prepareGstNotification(caseId: string, input: GstComposeInput, actor: MutationActor) {
     const kase = mock.getCase(caseId);
     if (!kase) throw new Error(`prepareGstNotification: case ${caseId} not found`);
     const parsed = gstComposeSchema.safeParse(input);
@@ -478,6 +505,8 @@ export class MemoryRepository implements Repository {
         entity: "recovery_case",
         entityId: caseId,
         reason: failed.note,
+        actorId: actor.actorId,
+        actorRole: actor.actorRole,
       });
       return tick({ case: updatedCase, manifestHash: null });
     }
@@ -490,12 +519,14 @@ export class MemoryRepository implements Repository {
       entity: "recovery_case",
       entityId: caseId,
       reason: prepared?.note ?? "GST pack re-validated (already prepared)",
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
 
     return tick({ case: updatedCase, manifestHash: outcome.result.data?.manifestHash ?? null });
   }
 
-  async openGstAssistedSession(caseId: string) {
+  async openGstAssistedSession(caseId: string, actor: MutationActor) {
     const idempotencyKey = `gst-session:${caseId}`;
     const outcome = await runAdapter((key) => getAdapters().gstPortal.openAssistedSession(key), idempotencyKey);
     mock.appendAudit({
@@ -503,11 +534,13 @@ export class MemoryRepository implements Repository {
       entity: "recovery_case",
       entityId: caseId,
       reason: outcome.result.nextAction ?? "Assisted GST portal session opened",
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
     return tick({ sessionUrl: outcome.result.data?.sessionUrl ?? null });
   }
 
-  async captureGstFiling(caseId: string, staffReference: string) {
+  async captureGstFiling(caseId: string, staffReference: string, actor: MutationActor) {
     const kase = mock.getCase(caseId);
     if (!kase) throw new Error(`captureGstFiling: case ${caseId} not found`);
 
@@ -525,6 +558,8 @@ export class MemoryRepository implements Repository {
         entity: "recovery_case",
         entityId: caseId,
         reason: failed.note,
+        actorId: actor.actorId,
+        actorRole: actor.actorRole,
       });
       return tick({ case: updatedCase, referenceNumber: null });
     }
@@ -565,12 +600,19 @@ export class MemoryRepository implements Repository {
       entity: "recovery_case",
       entityId: caseId,
       reason: `${filed.note}; reference ${referenceNumber}`,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
 
     return tick({ case: updatedCase, referenceNumber });
   }
 
-  async saveMsmeStage(caseId: string, stage: MsmeStage, payload: Record<string, unknown>) {
+  async saveMsmeStage(
+    caseId: string,
+    stage: MsmeStage,
+    payload: Record<string, unknown>,
+    actor: MutationActor,
+  ) {
     const idempotencyKey = `msme-stage:${caseId}:${stage}`;
     const outcome = await runAdapter(
       (key) => getAdapters().msmePortal.saveStage({ idempotencyKey: key, caseId, stage, payload }),
@@ -581,11 +623,13 @@ export class MemoryRepository implements Repository {
       entity: "recovery_case",
       entityId: caseId,
       reason: `Stage "${stage}" saved (${outcome.result.outcome})`,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
     return tick({ resumeToken: outcome.result.data?.resumeToken ?? null });
   }
 
-  async buildMsmePreview(caseId: string) {
+  async buildMsmePreview(caseId: string, actor: MutationActor) {
     const idempotencyKey = `msme-preview:${caseId}`;
     const outcome = await runAdapter((key) => getAdapters().msmePortal.buildPreview(key), idempotencyKey);
     mock.appendAudit({
@@ -593,6 +637,8 @@ export class MemoryRepository implements Repository {
       entity: "recovery_case",
       entityId: caseId,
       reason: `Immutable preview snapshot generated (${outcome.result.outcome})`,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
     return tick({
       previewPdfKey: outcome.result.data?.previewPdfKey ?? null,
@@ -600,7 +646,7 @@ export class MemoryRepository implements Repository {
     });
   }
 
-  async captureMsmeAcknowledgement(caseId: string) {
+  async captureMsmeAcknowledgement(caseId: string, actor: MutationActor) {
     const kase = mock.getCase(caseId);
     if (!kase) throw new Error(`captureMsmeAcknowledgement: case ${caseId} not found`);
 
@@ -621,6 +667,8 @@ export class MemoryRepository implements Repository {
         entity: "recovery_case",
         entityId: caseId,
         reason: failed.note,
+        actorId: actor.actorId,
+        actorRole: actor.actorRole,
       });
       return tick({ case: updatedCase, diaryNumber: null, petitionPdfKey: null });
     }
@@ -660,12 +708,14 @@ export class MemoryRepository implements Repository {
       entity: "recovery_case",
       entityId: caseId,
       reason: `${filed.note}; diary number ${diaryNumber ?? "pending"}`,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
 
     return tick({ case: updatedCase, diaryNumber, petitionPdfKey });
   }
 
-  async prepareDdTask(caseId: string) {
+  async prepareDdTask(caseId: string, actor: MutationActor) {
     const kase = mock.getCase(caseId);
     if (!kase) throw new Error(`prepareDdTask: case ${caseId} not found`);
     const prepared = applyDdPrepared(kase);
@@ -675,11 +725,13 @@ export class MemoryRepository implements Repository {
       entity: "recovery_case",
       entityId: caseId,
       reason: prepared.note,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
     return tick({ case: updatedCase });
   }
 
-  async scheduleHearing(caseId: string, startsAtIso: string) {
+  async scheduleHearing(caseId: string, startsAtIso: string, actor: MutationActor) {
     const kase = mock.getCase(caseId);
     if (!kase) throw new Error(`scheduleHearing: case ${caseId} not found`);
     const startsAt = new Date(startsAtIso);
@@ -705,6 +757,8 @@ export class MemoryRepository implements Repository {
       entity: "recovery_case",
       entityId: caseId,
       reason: `${scheduled.note}; calendar event ${outcome.result.data?.eventId ?? "n/a"}`,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
 
     return tick({ case: updatedCase, eventId: outcome.result.data?.eventId ?? null });
@@ -726,6 +780,7 @@ export class MemoryRepository implements Repository {
         | "outstandingBalance"
       >
     >,
+    actor: MutationActor,
   ) {
     const kase = mock.getCase(caseId);
     if (!kase) throw new Error(`correctInvoiceOcr: case ${caseId} not found`);
@@ -747,6 +802,8 @@ export class MemoryRepository implements Repository {
       entity: "invoice",
       entityId: invoiceId,
       reason: `Staff corrected extracted fields (was low-confidence); ${corrected.note}`,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
 
     return tick({ case: updatedCase, invoice });
@@ -760,7 +817,7 @@ export class MemoryRepository implements Repository {
     return tick({ enabled: mock.getAutomationEnabled() });
   }
 
-  async setAutomationState(enabled: boolean, reason: string) {
+  async setAutomationState(enabled: boolean, reason: string, actor: MutationActor) {
     if (!reason.trim()) throw new Error("setAutomationState: a reason is required");
     const result = mock.setAutomationEnabled(enabled);
     mock.appendAudit({
@@ -768,6 +825,8 @@ export class MemoryRepository implements Repository {
       entity: "organisation",
       entityId: "global",
       reason,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
     });
     return tick({ enabled: result });
   }

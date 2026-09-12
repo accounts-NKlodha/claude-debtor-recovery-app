@@ -2,11 +2,16 @@
 
 import { revalidatePath } from "next/cache";
 import { getRepo } from "@/server/repo";
+import { authorizeStaffMutation } from "@/lib/auth/session";
 import type { PaymentRecord } from "@/contract/types";
 
 /**
  * Record a receipt. If `clientConfirmed`, this immediately runs allocation +
  * the workflow rule that cancels pending escalation (PRD §7).
+ *
+ * Staff-only (recorded by the firm on the debtor's behalf -- the field name
+ * `clientConfirmed` describes the payment's real-world status, not who is
+ * calling this action). Authenticates independently of src/proxy.ts.
  */
 export async function recordPaymentAction(input: {
   caseId: string;
@@ -15,16 +20,18 @@ export async function recordPaymentAction(input: {
   reference: string | null;
   clientConfirmed: boolean;
 }) {
-  const result = await getRepo().recordPayment(input);
+  const actor = await authorizeStaffMutation();
+  const result = await getRepo().recordPayment(input, actor);
   revalidatePath("/payments");
   revalidatePath("/today");
   revalidatePath(`/cases/${input.caseId}`);
   return result;
 }
 
-/** Client confirms an already-recorded receipt. Cancels pending escalation. */
+/** Staff records that the client confirmed an already-recorded receipt (IRL, not in-app). Cancels pending escalation. */
 export async function confirmPaymentAction(paymentId: string, caseId: string) {
-  const result = await getRepo().confirmPayment(paymentId);
+  const actor = await authorizeStaffMutation();
+  const result = await getRepo().confirmPayment(paymentId, actor);
   revalidatePath("/payments");
   revalidatePath("/today");
   revalidatePath(`/cases/${caseId}`);

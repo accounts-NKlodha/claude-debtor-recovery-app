@@ -226,7 +226,23 @@ export interface Database {
       audit_events: TableShape<AuditEventRow, "id" | "created_at">;
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      /** supabase/migrations/0005_privileged_audit_writer.sql -- the only
+       * supported way to append an audit_events row. Derives actor_id from
+       * auth.uid() server-side; the caller-supplied args carry no actor
+       * field, so attribution cannot be forged from the client. */
+      record_audit_event: {
+        Args: {
+          p_organisation_id: string | null;
+          p_action: string;
+          p_entity: string;
+          p_entity_id: string | null;
+          p_reason: string | null;
+          p_metadata_json: Record<string, unknown> | null;
+        };
+        Returns: AuditEventRow;
+      };
+    };
     Enums: {
       case_status: CaseStatus;
       waiting_on: WaitingOn;

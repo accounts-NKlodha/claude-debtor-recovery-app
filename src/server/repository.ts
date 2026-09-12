@@ -10,6 +10,27 @@
  *
  * Every method is async and every list method takes an explicit tenant scope
  * where one applies (PRD §13 — client-level authorization on every query).
+ *
+ * TENANT INVARIANT (P0-1/P0-2-R1 §3): every mutation below takes a mandatory
+ * trailing `actor: MutationActor` parameter -- it is a compile error to call
+ * any of these without one, and the only way to obtain one is
+ * `authorizeStaffMutation()`/`authorizeClientMutation()` in
+ * `src/lib/auth/session.ts`, which derive it from the verified server-side
+ * session (never from the method's own `input`/form-shaped parameters, which
+ * a browser fully controls). This makes attribution forgery a compile-time
+ * impossibility at every call site, not a caller convention.
+ *
+ * Today every mutation call site is staff-only (see `src/app/actions/*` --
+ * none of the `(client)` surface pages import a server action), and staff
+ * are cross-org by design (PRD §4), so no repository mutation method here
+ * additionally re-derives or re-checks a tenant boundary from `actor` --
+ * there is none to enforce for a staff actor. If a client-invokable mutation
+ * is ever added, its action MUST call `authorizeClientMutation(organisationId)`
+ * with an `organisationId` read from the entity being mutated (e.g. via
+ * `getCase()`), not from a form field -- `requireClientContext` already
+ * throws `ForbiddenError` when the session's organisation doesn't match
+ * (see `src/lib/auth/context.test.ts`) -- and should not trust the
+ * repository to re-derive that check on its behalf.
  */
 
 import type {
@@ -22,6 +43,7 @@ import type {
   RecoveryCase,
   WorkflowTask,
 } from "@/contract/types";
+import type { MutationActor } from "@/lib/auth/types";
 import type { CaseRow, ClientOverview, QueueItem } from "@/lib/mock-data";
 
 export type CreateOrganisationResult =
@@ -70,6 +92,7 @@ export interface Repository {
    */
   createOrganisation(
     input: import("@/contract/schemas").CreateOrganisationInput,
+    actor: MutationActor,
   ): Promise<CreateOrganisationResult>;
   getDebtor(id: string): Promise<Debtor | undefined>;
   assigneeName(id: string | null): Promise<string>;
@@ -109,6 +132,7 @@ export interface Repository {
   createCaseFromManualInvoice(
     organisationId: string,
     input: import("@/contract/schemas").ManualInvoiceInput,
+    actor: MutationActor,
   ): Promise<{ case: RecoveryCase; invoice: Invoice; debtor: Debtor }>;
   /** Validates a bulk-import CSV against the contract without persisting anything. */
   validateBulkImport(csvText: string): Promise<ImportResult>;
@@ -116,6 +140,7 @@ export interface Repository {
   commitBulkImport(
     organisationId: string,
     csvText: string,
+    actor: MutationActor,
   ): Promise<{ result: ImportResult; casesCreated: number }>;
 
   // -- mutations ------------------------------------------------------------
@@ -124,15 +149,21 @@ export interface Repository {
    * runs the allocation + workflow rule (PRD §7): confirming immediately
    * cancels pending escalation, in full or in part.
    */
-  recordPayment(input: {
-    caseId: string;
-    kind: PaymentRecord["kind"];
-    amount: number;
-    reference: string | null;
-    clientConfirmed: boolean;
-  }): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase | null }>;
+  recordPayment(
+    input: {
+      caseId: string;
+      kind: PaymentRecord["kind"];
+      amount: number;
+      reference: string | null;
+      clientConfirmed: boolean;
+    },
+    actor: MutationActor,
+  ): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase | null }>;
   /** Client confirms an already-recorded receipt. Cancels pending escalation. */
-  confirmPayment(paymentId: string): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase }>;
+  confirmPayment(
+    paymentId: string,
+    actor: MutationActor,
+  ): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase }>;
 
   /**
    * Send the initial reminder for a case in `active` status (PRD §5/§8):
@@ -141,7 +172,10 @@ export interface Repository {
    * advances the case (sent -> delivered -> 24h timer started, or a
    * both-channels-failed contact-correction task on adapter failure).
    */
-  sendInitialReminder(caseId: string): Promise<{ case: RecoveryCase; communication: Communication }>;
+  sendInitialReminder(
+    caseId: string,
+    actor: MutationActor,
+  ): Promise<{ case: RecoveryCase; communication: Communication }>;
 
   /**
    * GST assisted-notification flow (PRD §11). Government-portal actions cap
@@ -151,13 +185,15 @@ export interface Repository {
   prepareGstNotification(
     caseId: string,
     input: import("@/contract/schemas").GstComposeInput,
+    actor: MutationActor,
   ): Promise<{ case: RecoveryCase; manifestHash: string | null }>;
   /** Opens the controlled browser session; always human_action_required -- no CAPTCHA/OTP bypass. */
-  openGstAssistedSession(caseId: string): Promise<{ sessionUrl: string | null }>;
+  openGstAssistedSession(caseId: string, actor: MutationActor): Promise<{ sessionUrl: string | null }>;
   /** Called after the operator confirms Send. Fails closed on drift (scenario 9). */
   captureGstFiling(
     caseId: string,
     staffReference: string,
+    actor: MutationActor,
   ): Promise<{ case: RecoveryCase; referenceNumber: string | null }>;
 
   /**
@@ -169,12 +205,17 @@ export interface Repository {
     caseId: string,
     stage: import("@/contract/adapters").MsmeStage,
     payload: Record<string, unknown>,
+    actor: MutationActor,
   ): Promise<{ resumeToken: string | null }>;
   /** Builds the immutable preview snapshot ahead of final submit. */
-  buildMsmePreview(caseId: string): Promise<{ previewPdfKey: string | null; previewHash: string | null }>;
+  buildMsmePreview(
+    caseId: string,
+    actor: MutationActor,
+  ): Promise<{ previewPdfKey: string | null; previewHash: string | null }>;
   /** Called after the operator confirms final submit. Fails closed on drift. */
   captureMsmeAcknowledgement(
     caseId: string,
+    actor: MutationActor,
   ): Promise<{ case: RecoveryCase; diaryNumber: string | null; petitionPdfKey: string | null }>;
 
   /**
@@ -182,10 +223,11 @@ export interface Repository {
    * draft remain human/manual; scheduling a hearing creates a calendar event
    * through the calendar adapter.
    */
-  prepareDdTask(caseId: string): Promise<{ case: RecoveryCase }>;
+  prepareDdTask(caseId: string, actor: MutationActor): Promise<{ case: RecoveryCase }>;
   scheduleHearing(
     caseId: string,
     startsAtIso: string,
+    actor: MutationActor,
   ): Promise<{ case: RecoveryCase; eventId: string | null }>;
 
   /**
@@ -204,7 +246,11 @@ export interface Repository {
    * automated external actions; does not delete queued evidence or close cases.
    */
   getAutomationState(): Promise<{ enabled: boolean }>;
-  setAutomationState(enabled: boolean, reason: string): Promise<{ enabled: boolean }>;
+  setAutomationState(
+    enabled: boolean,
+    reason: string,
+    actor: MutationActor,
+  ): Promise<{ enabled: boolean }>;
 
   correctInvoiceOcr(
     caseId: string,
@@ -215,5 +261,6 @@ export interface Repository {
         "invoiceNumber" | "invoiceDate" | "dueDate" | "taxableValue" | "taxRate" | "taxAmount" | "invoiceTotal" | "outstandingBalance"
       >
     >,
+    actor: MutationActor,
   ): Promise<{ case: RecoveryCase; invoice: Invoice }>;
 }

@@ -1041,6 +1041,11 @@ export interface AuditEntry {
   entityId: string;
   reason: string | null;
   createdAt: string;
+  /** Who performed this action, per the authenticated server-side session --
+   * never a value a browser/form supplied (P0-2 requirement 10). `null` only
+   * for the seed row below, which predates this field. */
+  actorId: string | null;
+  actorRole: string | null;
 }
 const AUDIT_LOG_SEED: AuditEntry[] = [
   {
@@ -1050,6 +1055,8 @@ const AUDIT_LOG_SEED: AuditEntry[] = [
     entityId: "case-1",
     reason: "Certification + validation + age gate cleared",
     createdAt: iso(-6),
+    actorId: null,
+    actorRole: null,
   },
 ];
 let nextAuditSeq = AUDIT_LOG_SEED.length;

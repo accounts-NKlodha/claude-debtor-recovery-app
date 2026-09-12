@@ -30,6 +30,18 @@ export type AuthContext =
       demo: boolean;
     };
 
+/**
+ * The only shape audit attribution may be written with (P0-2 requirement 10
+ * / P0-1-R1 §5.5-5.6). Always produced by `actorAttribution()` from a real
+ * `AuthContext` -- never constructed from a server action's own input
+ * parameter, so a mutation's `input`/form payload has no field that could
+ * ever be mistaken for -- or forge -- this value.
+ */
+export interface MutationActor {
+  actorId: string;
+  actorRole: string;
+}
+
 export class UnauthenticatedError extends Error {
   constructor(message = "Authentication required") {
     super(message);

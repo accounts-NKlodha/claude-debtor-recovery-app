@@ -14,6 +14,7 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import type { AppUserRow, UserOrganisationRow } from "@/lib/supabase/types";
 import {
+  actorAttribution,
   demoStaffContext,
   isProduction,
   requireAdminContext,
@@ -22,7 +23,7 @@ import {
   resolveAuthContext,
   type RawIdentity,
 } from "./context";
-import { UnauthenticatedError, type AuthContext } from "./types";
+import { UnauthenticatedError, type AuthContext, type MutationActor } from "./types";
 
 /**
  * Resolves the authenticated actor for the current request, or `null` if
@@ -121,6 +122,39 @@ export async function resolveClientOrganisationId(
   const fallback = fallbackOrganisations[0];
   if (!fallback) throw new UnauthenticatedError("No organisation available for demo client session");
   return fallback.id;
+}
+
+/**
+ * The single entry point every staff-facing server action must call before
+ * doing any mutation (P0-1/P0-2-R1 §2). Fails closed exactly like
+ * `requireStaffSession()` (throws in production with no session; demo
+ * fallback outside it) and additionally returns the `MutationActor` the
+ * action must use for audit attribution -- never the action's own input
+ * parameters, which a browser fully controls.
+ */
+export async function authorizeStaffMutation(): Promise<MutationActor> {
+  const actor = await requireStaffSession();
+  return actorAttribution(actor);
+}
+
+/** Like `authorizeStaffMutation`, but for actions PRD §5 reserves to admins
+ * only (e.g. the global automation kill switch). */
+export async function authorizeAdminMutation(): Promise<MutationActor> {
+  const actor = await requireAdminSession();
+  return actorAttribution(actor);
+}
+
+/**
+ * The client-facing counterpart: requires a real client session scoped to
+ * exactly `organisationId` (no demo fallback, in any environment -- see
+ * `requireClientSession`) and returns the actor for audit attribution.
+ * `organisationId` must come from the entity being mutated (e.g. a case
+ * looked up by id), never from a form field, so a client can't submit a
+ * different org id to redirect the mutation (P0-2 requirement 3).
+ */
+export async function authorizeClientMutation(organisationId: string): Promise<MutationActor> {
+  const actor = await requireClientSession(organisationId);
+  return actorAttribution(actor);
 }
 
 export { UnauthenticatedError, demoStaffContext, isProduction };

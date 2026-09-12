@@ -7,7 +7,7 @@
  * resolves a real request into the inputs these functions take.
  */
 
-import { ForbiddenError, UnauthenticatedError, type AuthContext } from "./types";
+import { ForbiddenError, UnauthenticatedError, type AuthContext, type MutationActor } from "./types";
 
 /**
  * Raw shape available after verifying a Supabase session (`auth.getUser()`)
@@ -139,7 +139,7 @@ export function assertOwnsOrganisation(actor: AuthContext, organisationId: strin
 
 /** For audit attribution (P0-2 requirement 10): derive actor id/role from
  * the authenticated context, never from a caller-supplied value. */
-export function actorAttribution(actor: AuthContext): { actorId: string; actorRole: string } {
+export function actorAttribution(actor: AuthContext): MutationActor {
   return {
     actorId: actor.userId,
     actorRole: actor.kind === "staff" ? actor.role : "client",

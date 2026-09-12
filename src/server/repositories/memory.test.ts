@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { MemoryRepository } from "./memory";
 import * as mock from "@/lib/mock-data";
+import type { MutationActor } from "@/lib/auth/types";
 
 const repo = new MemoryRepository();
+const staffActor: MutationActor = { actorId: "test-staff-1", actorRole: "staff" };
 
 describe("MemoryRepository", () => {
   it("resolves reference data by id", async () => {
@@ -65,7 +67,7 @@ describe("MemoryRepository", () => {
       "NKL-X,X Pvt Ltd,08AAAAA0000A1Z5,Committed Debtor,29ZZZZZ8888Z1Z1,9876543211,y@example.com,COMMIT-1,2026-06-01,2026-07-01,50000,18,9000,59000,0,59000,2026-08-01,yes,,",
       "NKL-X,X Pvt Ltd,08AAAAA0000A1Z5,Committed Debtor,,bad-phone,,COMMIT-2,not-a-date,,abc,18,9000,59000,0,59000,2026-08-01,yes,,",
     ].join("\n");
-    const { result, casesCreated } = await repo.commitBulkImport(org.id, csv);
+    const { result, casesCreated } = await repo.commitBulkImport(org.id, csv, staffActor);
     expect(result.validRows).toBe(1);
     expect(result.errorRows).toBe(1);
     expect(casesCreated).toBe(1);
@@ -74,46 +76,58 @@ describe("MemoryRepository", () => {
 
   it("requires a reason to change the global automation switch, and audits it", async () => {
     const { enabled: before } = await repo.getAutomationState();
-    await expect(repo.setAutomationState(!before, "")).rejects.toThrow(/reason/i);
+    await expect(repo.setAutomationState(!before, "", staffActor)).rejects.toThrow(/reason/i);
 
-    const { enabled: after } = await repo.setAutomationState(!before, "pausing for a drift investigation");
+    const { enabled: after } = await repo.setAutomationState(
+      !before,
+      "pausing for a drift investigation",
+      staffActor,
+    );
     expect(after).toBe(!before);
 
     const log = await repo.listAuditLog(5);
     expect(log[0].action).toMatch(/automation\.(enabled|disabled)/);
     expect(log[0].reason).toBe("pausing for a drift investigation");
+    expect(log[0].actorId).toBe(staffActor.actorId);
+    expect(log[0].actorRole).toBe(staffActor.actorRole);
 
     // restore so other tests in this file see the default state
-    await repo.setAutomationState(before, "test cleanup");
+    await repo.setAutomationState(before, "test cleanup", staffActor);
   });
 
   it("rejects a duplicate client code", async () => {
     const existing = mock.ORGANISATIONS[0];
     await expect(
-      repo.createOrganisation({
-        clientCode: existing.clientCode,
-        legalEntityName: "Some Other Entity Pvt Ltd",
-        creditorGstin: null,
-        udyamNumber: null,
-        jitoMember: false,
-        confirmDuplicateName: false,
-        duplicateOverrideReason: null,
-      }),
+      repo.createOrganisation(
+        {
+          clientCode: existing.clientCode,
+          legalEntityName: "Some Other Entity Pvt Ltd",
+          creditorGstin: null,
+          udyamNumber: null,
+          jitoMember: false,
+          confirmDuplicateName: false,
+          duplicateOverrideReason: null,
+        },
+        staffActor,
+      ),
     ).rejects.toThrow(/client code/i);
   });
 
   it("rejects a duplicate creditor GSTIN outright, with no override", async () => {
     const existing = mock.ORGANISATIONS.find((o) => o.creditorGstin)!;
     await expect(
-      repo.createOrganisation({
-        clientCode: "NKL-DUPGSTIN",
-        legalEntityName: "A Totally Different Name Pvt Ltd",
-        creditorGstin: existing.creditorGstin,
-        udyamNumber: null,
-        jitoMember: false,
-        confirmDuplicateName: false,
-        duplicateOverrideReason: null,
-      }),
+      repo.createOrganisation(
+        {
+          clientCode: "NKL-DUPGSTIN",
+          legalEntityName: "A Totally Different Name Pvt Ltd",
+          creditorGstin: existing.creditorGstin,
+          udyamNumber: null,
+          jitoMember: false,
+          confirmDuplicateName: false,
+          duplicateOverrideReason: null,
+        },
+        staffActor,
+      ),
     ).rejects.toThrow(/gstin/i);
   });
 
@@ -121,28 +135,39 @@ describe("MemoryRepository", () => {
     const existing = mock.ORGANISATIONS[0];
     const before = (await repo.listOrganisations()).length;
 
-    const warned = await repo.createOrganisation({
-      clientCode: "NKL-NAMECLASH",
-      legalEntityName: `  ${existing.legalEntityName.toUpperCase()}  `, // whitespace/case-insensitive match
-      creditorGstin: null,
-      udyamNumber: null,
-      jitoMember: false,
-      confirmDuplicateName: false,
-      duplicateOverrideReason: null,
-    });
+    const warned = await repo.createOrganisation(
+      {
+        clientCode: "NKL-NAMECLASH",
+        legalEntityName: `  ${existing.legalEntityName.toUpperCase()}  `, // whitespace/case-insensitive match
+        creditorGstin: null,
+        udyamNumber: null,
+        jitoMember: false,
+        confirmDuplicateName: false,
+        duplicateOverrideReason: null,
+      },
+      staffActor,
+    );
     expect(warned.status).toBe("duplicate_name_warning");
     expect((await repo.listOrganisations()).length).toBe(before); // nothing created yet
 
-    const created = await repo.createOrganisation({
-      clientCode: "NKL-NAMECLASH",
-      legalEntityName: `  ${existing.legalEntityName.toUpperCase()}  `,
-      creditorGstin: null,
-      udyamNumber: null,
-      jitoMember: false,
-      confirmDuplicateName: true,
-      duplicateOverrideReason: "separate branch, confirmed by staff",
-    });
+    const created = await repo.createOrganisation(
+      {
+        clientCode: "NKL-NAMECLASH",
+        legalEntityName: `  ${existing.legalEntityName.toUpperCase()}  `,
+        creditorGstin: null,
+        udyamNumber: null,
+        jitoMember: false,
+        confirmDuplicateName: true,
+        duplicateOverrideReason: "separate branch, confirmed by staff",
+      },
+      staffActor,
+    );
     expect(created.status).toBe("created");
     expect((await repo.listOrganisations()).length).toBe(before + 1);
+    if (created.status !== "created") throw new Error("expected creation to succeed");
+    const auditForCreated = (await repo.listAuditLog(10)).find(
+      (a) => a.entityId === created.organisation.id,
+    );
+    expect(auditForCreated?.actorId).toBe(staffActor.actorId);
   });
 });

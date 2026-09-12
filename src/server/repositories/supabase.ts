@@ -37,6 +37,7 @@ import type {
   WorkflowTask,
 } from "@/contract/types";
 import { CLIENT_SAFE_LABEL } from "@/contract/enums";
+import type { MutationActor } from "@/lib/auth/types";
 import type { CaseRow, ClientOverview, QueueItem } from "@/lib/mock-data";
 import type {
   AgeingBucket,
@@ -201,6 +202,7 @@ export class SupabaseRepository implements Repository {
 
   async createOrganisation(
     input: import("@/contract/schemas").CreateOrganisationInput,
+    actor: MutationActor,
   ): Promise<CreateOrganisationResult> {
     const supabase = await this.db();
 
@@ -250,26 +252,44 @@ export class SupabaseRepository implements Repository {
       udyam_number: input.udyamNumber ?? null,
       jito_member: input.jitoMember,
     };
-    const { data, error } = await supabase
+    const insertRes = await supabase
       .from("organisations")
       .insert(row as never)
       .select("*")
       .single();
-    if (error) throw new Error(`SupabaseRepository.createOrganisation: ${error.message}`);
+    if (insertRes.error) {
+      throw new Error(`SupabaseRepository.createOrganisation: ${insertRes.error.message}`);
+    }
+    // Same overload-resolution limitation as elsewhere in this file (see the
+    // comment above) -- .single()'s result also infers as `never`.
+    const created = insertRes.data as unknown as OrganisationRow;
 
-    // PRODUCTION LIMITATION (audit P1-4): unlike MemoryRepository, this
-    // write does NOT create an audit_events row. There is no privileged
-    // audit-writer service yet -- RLS currently permits any authenticated
-    // caller to insert an audit_events row with an arbitrary actor/hash
-    // (WITH CHECK (true)), so writing one from here would itself be
-    // forgeable and would misrepresent this as tamper-evident when it is
-    // not. Do not add an audit_events insert here until the privileged
-    // writer from docs/PLAN.md M10 exists; wire this call through it then.
-    console.warn(
-      "SupabaseRepository.createOrganisation: organisation created without an audit trail -- " +
-        "the privileged audit writer (docs/PLAN.md M10) does not exist yet.",
-    );
-    return { status: "created", organisation: toOrganisation(data) };
+    // Attribution via the privileged writer (supabase/migrations/0005_privileged_audit_writer.sql),
+    // which derives actor_id from auth.uid() itself -- `actor` here is not
+    // passed through to the RPC call (there is no argument for it) and
+    // exists only so this method's signature matches every other mutation's
+    // "cannot be called without an authorized actor" invariant (see
+    // src/server/repository.ts). NOT executed against a live database in
+    // this build -- type-checked only, per the file header.
+    const auditRes = await supabase.rpc("record_audit_event" as never, {
+      p_organisation_id: created.id,
+      p_action: "organisation.created",
+      p_entity: "organisation",
+      p_entity_id: created.id,
+      p_reason: nameCollision
+        ? `New client onboarded: ${created.legal_entity_name} (${created.client_code}) -- ` +
+          `staff confirmed this is distinct from existing client ${nameCollision.client_code}; ` +
+          `override reason: ${input.duplicateOverrideReason}`
+        : `New client onboarded: ${created.legal_entity_name} (${created.client_code})`,
+      p_metadata_json: null,
+    } as never);
+    if (auditRes.error) {
+      throw new Error(
+        `SupabaseRepository.createOrganisation: organisation created but audit attribution failed ` +
+          `(${auditRes.error.message}) -- actor ${actor.actorId}/${actor.actorRole}`,
+      );
+    }
+    return { status: "created", organisation: toOrganisation(created) };
   }
 
   async getDebtor(id: string) {
@@ -524,6 +544,7 @@ export class SupabaseRepository implements Repository {
   async createCaseFromManualInvoice(
     _organisationId: string,
     _input: import("@/contract/schemas").ManualInvoiceInput,
+    _actor: MutationActor,
   ): Promise<{ case: RecoveryCase; invoice: Invoice; debtor: Debtor }> {
     // TODO(api): find-or-create the debtor, run src/domain/intake.ts
     // createDraftCase(), INSERT case + invoice in one transaction, audit it.
@@ -556,19 +577,23 @@ export class SupabaseRepository implements Repository {
   async commitBulkImport(
     _organisationId: string,
     _csvText: string,
+    _actor: MutationActor,
   ): Promise<{ result: ImportResult; casesCreated: number }> {
     // TODO(api): validateBulkImport() then createCaseFromManualInvoice() per
     // valid row, same as MemoryRepository.commitBulkImport.
     throw new Error("SupabaseRepository.commitBulkImport: not wired yet -- see src/domain/intake.ts");
   }
 
-  async recordPayment(_input: {
-    caseId: string;
-    kind: PaymentRecordRow["kind"];
-    amount: number;
-    reference: string | null;
-    clientConfirmed: boolean;
-  }): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase | null }> {
+  async recordPayment(
+    _input: {
+      caseId: string;
+      kind: PaymentRecordRow["kind"];
+      amount: number;
+      reference: string | null;
+      clientConfirmed: boolean;
+    },
+    _actor: MutationActor,
+  ): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase | null }> {
     // TODO(api): INSERT into payment_records, then call confirmPayment() below
     // when clientConfirmed -- same rule, real transaction. The pure logic
     // (src/domain/apply-payment.ts) is written and unit-tested; this only
@@ -578,6 +603,7 @@ export class SupabaseRepository implements Repository {
 
   async confirmPayment(
     _paymentId: string,
+    _actor: MutationActor,
   ): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase }> {
     // TODO(api): SELECT payment + case + invoices, run
     // applyConfirmedPayment(), UPDATE case + invoices in one transaction,
@@ -587,6 +613,7 @@ export class SupabaseRepository implements Repository {
 
   async sendInitialReminder(
     _caseId: string,
+    _actor: MutationActor,
   ): Promise<{ case: RecoveryCase; communication: Communication }> {
     // TODO(api): SELECT case/debtor/org/invoice, call the real messaging
     // adapter through src/orchestrator/run-adapter.ts, INSERT the
@@ -599,6 +626,7 @@ export class SupabaseRepository implements Repository {
   async prepareGstNotification(
     _caseId: string,
     _input: import("@/contract/schemas").GstComposeInput,
+    _actor: MutationActor,
   ): Promise<{ case: RecoveryCase; manifestHash: string | null }> {
     // TODO(api): validate + call the real GST adapter's prepare() through
     // run-adapter.ts, UPDATE the case via src/domain/gst.ts applyGstPrepared(),
@@ -606,7 +634,10 @@ export class SupabaseRepository implements Repository {
     throw new Error("SupabaseRepository.prepareGstNotification: not wired yet -- see src/domain/gst.ts");
   }
 
-  async openGstAssistedSession(_caseId: string): Promise<{ sessionUrl: string | null }> {
+  async openGstAssistedSession(
+    _caseId: string,
+    _actor: MutationActor,
+  ): Promise<{ sessionUrl: string | null }> {
     // TODO(api): call the real GST adapter's openAssistedSession(), audit it.
     throw new Error("SupabaseRepository.openGstAssistedSession: not wired yet -- see src/domain/gst.ts");
   }
@@ -614,6 +645,7 @@ export class SupabaseRepository implements Repository {
   async captureGstFiling(
     _caseId: string,
     _staffReference: string,
+    _actor: MutationActor,
   ): Promise<{ case: RecoveryCase; referenceNumber: string | null }> {
     // TODO(api): call captureResult() through run-adapter.ts; on success
     // apply src/domain/gst.ts applyGstFiled() and INSERT the communications
@@ -626,6 +658,7 @@ export class SupabaseRepository implements Repository {
     _caseId: string,
     _stage: import("@/contract/adapters").MsmeStage,
     _payload: Record<string, unknown>,
+    _actor: MutationActor,
   ): Promise<{ resumeToken: string | null }> {
     // TODO(api): call the real MSME adapter's saveStage(), audit it.
     throw new Error("SupabaseRepository.saveMsmeStage: not wired yet -- see src/domain/msme.ts");
@@ -633,6 +666,7 @@ export class SupabaseRepository implements Repository {
 
   async buildMsmePreview(
     _caseId: string,
+    _actor: MutationActor,
   ): Promise<{ previewPdfKey: string | null; previewHash: string | null }> {
     // TODO(api): call buildPreview(), store the immutable snapshot as a
     // portal_artifacts row, audit it.
@@ -641,6 +675,7 @@ export class SupabaseRepository implements Repository {
 
   async captureMsmeAcknowledgement(
     _caseId: string,
+    _actor: MutationActor,
   ): Promise<{ case: RecoveryCase; diaryNumber: string | null; petitionPdfKey: string | null }> {
     // TODO(api): call captureAcknowledgement() through run-adapter.ts; on
     // success apply src/domain/msme.ts applyMsmeFiled() and INSERT the
@@ -649,7 +684,7 @@ export class SupabaseRepository implements Repository {
     throw new Error("SupabaseRepository.captureMsmeAcknowledgement: not wired yet -- see src/domain/msme.ts");
   }
 
-  async prepareDdTask(_caseId: string): Promise<{ case: RecoveryCase }> {
+  async prepareDdTask(_caseId: string, _actor: MutationActor): Promise<{ case: RecoveryCase }> {
     // TODO(api): UPDATE the case via src/domain/hearing.ts applyDdPrepared(),
     // INSERT a workflow_tasks row (dd_preparation, waiting_on client), audit it.
     throw new Error("SupabaseRepository.prepareDdTask: not wired yet -- see src/domain/hearing.ts");
@@ -658,6 +693,7 @@ export class SupabaseRepository implements Repository {
   async scheduleHearing(
     _caseId: string,
     _startsAtIso: string,
+    _actor: MutationActor,
   ): Promise<{ case: RecoveryCase; eventId: string | null }> {
     // TODO(api): call the calendar adapter's upsertEvent() through
     // run-adapter.ts, UPDATE the case via applyHearingScheduled(), INSERT a
@@ -681,6 +717,7 @@ export class SupabaseRepository implements Repository {
         | "outstandingBalance"
       >
     >,
+    _actor: MutationActor,
   ): Promise<{ case: RecoveryCase; invoice: Invoice }> {
     // TODO(api): UPDATE the invoice row (preserve document_versions
     // provenance), UPDATE the case via src/domain/ocr.ts applyOcrCorrected(),
@@ -703,6 +740,8 @@ export class SupabaseRepository implements Repository {
       entityId: r.entity_id ?? "",
       reason: r.reason,
       createdAt: r.created_at,
+      actorId: r.actor_id,
+      actorRole: r.actor_role,
     }));
   }
 
@@ -712,7 +751,11 @@ export class SupabaseRepository implements Repository {
     throw new Error("SupabaseRepository.getAutomationState: not wired yet");
   }
 
-  async setAutomationState(_enabled: boolean, _reason: string): Promise<{ enabled: boolean }> {
+  async setAutomationState(
+    _enabled: boolean,
+    _reason: string,
+    _actor: MutationActor,
+  ): Promise<{ enabled: boolean }> {
     // TODO(api): UPDATE the settings row, INSERT an audit_events row.
     throw new Error("SupabaseRepository.setAutomationState: not wired yet");
   }
