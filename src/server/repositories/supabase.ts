@@ -21,6 +21,7 @@ import type {
   CommunicationRow,
   Database,
   InvoiceRow,
+  OrganisationRow,
   PaymentRecordRow,
   RecoveryCaseRow,
   WorkflowTaskRow,
@@ -37,7 +38,14 @@ import type {
 } from "@/contract/types";
 import { CLIENT_SAFE_LABEL } from "@/contract/enums";
 import type { CaseRow, ClientOverview, QueueItem } from "@/lib/mock-data";
-import type { AgeingBucket, DashboardKpis, Repository, StagePoint, TrendPoint } from "../repository";
+import type {
+  AgeingBucket,
+  CreateOrganisationResult,
+  DashboardKpis,
+  Repository,
+  StagePoint,
+  TrendPoint,
+} from "../repository";
 
 type Client = Awaited<ReturnType<typeof createClient>>;
 
@@ -193,8 +201,44 @@ export class SupabaseRepository implements Repository {
 
   async createOrganisation(
     input: import("@/contract/schemas").CreateOrganisationInput,
-  ): Promise<{ organisation: Organisation }> {
+  ): Promise<CreateOrganisationResult> {
     const supabase = await this.db();
+
+    // Duplicate checks first -- same rules as MemoryRepository. Client code
+    // uniqueness is additionally enforced by a DB constraint (defence in
+    // depth); GSTIN and name checks are not yet backed by one, so they run
+    // as explicit pre-checks here.
+    const [codeRes, gstinRes, nameRes] = await Promise.all([
+      supabase.from("organisations").select("*").eq("client_code", input.clientCode).maybeSingle(),
+      input.creditorGstin
+        ? supabase.from("organisations").select("*").eq("creditor_gstin", input.creditorGstin).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+      supabase.from("organisations").select("*"),
+    ]);
+    if (codeRes.data) {
+      throw new Error(`createOrganisation: client code "${input.clientCode}" is already in use`);
+    }
+    if (gstinRes.data) {
+      throw new Error(
+        `createOrganisation: creditor GSTIN "${input.creditorGstin}" is already registered to another client`,
+      );
+    }
+    const allOrgs: OrganisationRow[] = nameRes.data ?? [];
+    const needle = input.legalEntityName.trim().toLowerCase().replace(/\s+/g, " ");
+    const nameCollision = allOrgs.find(
+      (o) => o.legal_entity_name.trim().toLowerCase().replace(/\s+/g, " ") === needle,
+    );
+    if (nameCollision && !input.confirmDuplicateName) {
+      return {
+        status: "duplicate_name_warning",
+        existingOrganisation: {
+          id: nameCollision.id,
+          clientCode: nameCollision.client_code,
+          legalEntityName: nameCollision.legal_entity_name,
+        },
+      };
+    }
+
     // The hand-written Database type (src/lib/supabase/types.ts) doesn't
     // carry enough generic plumbing for .insert()'s overload resolution --
     // this is the first write call in this file. `as never` bypasses it for
@@ -212,10 +256,20 @@ export class SupabaseRepository implements Repository {
       .select("*")
       .single();
     if (error) throw new Error(`SupabaseRepository.createOrganisation: ${error.message}`);
-    // TODO(api): write the audit_events row through the privileged audit
-    // writer once it exists (see docs/PLAN.md M10 hash-chaining follow-up) --
-    // do not let a client insert its own audit row (audit P1-4).
-    return { organisation: toOrganisation(data) };
+
+    // PRODUCTION LIMITATION (audit P1-4): unlike MemoryRepository, this
+    // write does NOT create an audit_events row. There is no privileged
+    // audit-writer service yet -- RLS currently permits any authenticated
+    // caller to insert an audit_events row with an arbitrary actor/hash
+    // (WITH CHECK (true)), so writing one from here would itself be
+    // forgeable and would misrepresent this as tamper-evident when it is
+    // not. Do not add an audit_events insert here until the privileged
+    // writer from docs/PLAN.md M10 exists; wire this call through it then.
+    console.warn(
+      "SupabaseRepository.createOrganisation: organisation created without an audit trail -- " +
+        "the privileged audit writer (docs/PLAN.md M10) does not exist yet.",
+    );
+    return { status: "created", organisation: toOrganisation(data) };
   }
 
   async getDebtor(id: string) {

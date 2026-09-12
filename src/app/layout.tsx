@@ -26,6 +26,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      // The inline theme-init script below sets data-theme on this element
+      // before React hydrates (that's the whole point -- no flash of the
+      // wrong theme). React would otherwise warn/mismatch on hydration
+      // because the server never rendered that attribute; this is the
+      // documented escape hatch for exactly this pattern, scoped to the one
+      // attribute the script touches.
+      suppressHydrationWarning
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInit }} />

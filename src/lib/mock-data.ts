@@ -1111,6 +1111,22 @@ export function findOrgByClientCode(clientCode: string) {
   return ORGANISATIONS.find((o) => o.clientCode.trim().toLowerCase() === needle);
 }
 
+export function findOrgByGstin(gstin: string) {
+  const needle = gstin.trim().toUpperCase();
+  return ORGANISATIONS.find((o) => (o.creditorGstin ?? "").trim().toUpperCase() === needle);
+}
+
+/** Collapse internal whitespace + case for a name-collision check; "Acme  Pvt.  Ltd"
+ * and "acme pvt. ltd" should be treated as the same legal entity name. */
+export function normalizeOrgName(name: string) {
+  return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+export function findOrgByName(legalEntityName: string) {
+  const needle = normalizeOrgName(legalEntityName);
+  return ORGANISATIONS.find((o) => normalizeOrgName(o.legalEntityName) === needle);
+}
+
 export function insertOrganisation(org: Organisation) {
   ORGANISATIONS.push(org);
   return org;

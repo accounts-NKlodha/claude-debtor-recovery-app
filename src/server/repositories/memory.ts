@@ -26,7 +26,14 @@ import { getAdapters } from "@/adapters";
 import { gstComposeSchema, type GstComposeInput, type ManualInvoiceInput } from "@/contract/schemas";
 import type { MsmeStage } from "@/contract/adapters";
 import type { Communication, Invoice, PaymentRecord, RecoveryCase } from "@/contract/types";
-import type { AgeingBucket, DashboardKpis, Repository, StagePoint, TrendPoint } from "../repository";
+import type {
+  AgeingBucket,
+  CreateOrganisationResult,
+  DashboardKpis,
+  Repository,
+  StagePoint,
+  TrendPoint,
+} from "../repository";
 
 async function tick<T>(value: T): Promise<T> {
   // Yield a microtask so this behaves like a real async boundary in tests
@@ -54,10 +61,29 @@ export class MemoryRepository implements Repository {
     return tick([...mock.ORGANISATIONS]);
   }
 
-  async createOrganisation(input: import("@/contract/schemas").CreateOrganisationInput) {
+  async createOrganisation(
+    input: import("@/contract/schemas").CreateOrganisationInput,
+  ): Promise<CreateOrganisationResult> {
     if (mock.findOrgByClientCode(input.clientCode)) {
       throw new Error(`createOrganisation: client code "${input.clientCode}" is already in use`);
     }
+    if (input.creditorGstin && mock.findOrgByGstin(input.creditorGstin)) {
+      throw new Error(
+        `createOrganisation: creditor GSTIN "${input.creditorGstin}" is already registered to another client`,
+      );
+    }
+    const nameCollision = mock.findOrgByName(input.legalEntityName);
+    if (nameCollision && !input.confirmDuplicateName) {
+      return tick({
+        status: "duplicate_name_warning",
+        existingOrganisation: {
+          id: nameCollision.id,
+          clientCode: nameCollision.clientCode,
+          legalEntityName: nameCollision.legalEntityName,
+        },
+      });
+    }
+
     const organisation = mock.insertOrganisation({
       id: `org-${nanoid(8)}`,
       clientCode: input.clientCode,
@@ -71,9 +97,13 @@ export class MemoryRepository implements Repository {
       action: "organisation.created",
       entity: "organisation",
       entityId: organisation.id,
-      reason: `New client onboarded: ${organisation.legalEntityName} (${organisation.clientCode})`,
+      reason: nameCollision
+        ? `New client onboarded: ${organisation.legalEntityName} (${organisation.clientCode}) -- ` +
+          `staff confirmed this is distinct from existing client ${nameCollision.clientCode}; ` +
+          `override reason: ${input.duplicateOverrideReason}`
+        : `New client onboarded: ${organisation.legalEntityName} (${organisation.clientCode})`,
     });
-    return tick({ organisation });
+    return tick({ status: "created", organisation });
   }
   async getDebtor(id: string) {
     return tick(mock.getDebtor(id));

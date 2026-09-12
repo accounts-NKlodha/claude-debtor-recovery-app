@@ -24,6 +24,13 @@ import type {
 } from "@/contract/types";
 import type { CaseRow, ClientOverview, QueueItem } from "@/lib/mock-data";
 
+export type CreateOrganisationResult =
+  | { status: "created"; organisation: Organisation }
+  | {
+      status: "duplicate_name_warning";
+      existingOrganisation: { id: string; clientCode: string; legalEntityName: string };
+    };
+
 export interface DashboardKpis {
   openCases: number;
   amountUnderRecovery: number;
@@ -55,10 +62,15 @@ export interface Repository {
   // -- reference data ------------------------------------------------------
   getOrg(id: string): Promise<Organisation | undefined>;
   listOrganisations(): Promise<Organisation[]>;
-  /** Onboard a new client organisation. Rejects a duplicate client code. */
+  /**
+   * Onboard a new client organisation. Rejects a duplicate client code or
+   * duplicate creditor GSTIN outright. A legal-entity-name collision returns
+   * `duplicate_name_warning` instead of creating a record, unless the input
+   * already carries `confirmDuplicateName` + a reason (see schemas.ts).
+   */
   createOrganisation(
     input: import("@/contract/schemas").CreateOrganisationInput,
-  ): Promise<{ organisation: Organisation }>;
+  ): Promise<CreateOrganisationResult>;
   getDebtor(id: string): Promise<Debtor | undefined>;
   assigneeName(id: string | null): Promise<string>;
 

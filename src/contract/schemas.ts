@@ -77,19 +77,37 @@ export const debtorSchema = z.object({
   totalDue: moneyToPaise,
 });
 
-/** Onboarding a new client organisation (PRD §4 tenancy). */
-export const createOrganisationSchema = z.object({
-  clientCode: z
-    .string()
-    .trim()
-    .min(2, "Client code is required")
-    .max(20)
-    .regex(/^[A-Za-z0-9-]+$/, "Letters, digits and hyphens only"),
-  legalEntityName: z.string().trim().min(2, "Legal entity name is required"),
-  creditorGstin: optionalGstinSchema,
-  udyamNumber: z.string().trim().nullable().optional(),
-  jitoMember: z.boolean().default(false),
-});
+/**
+ * Onboarding a new client organisation (PRD §4 tenancy). Demo-only until
+ * Phase 1 staff/admin authentication and authorization exist -- see the
+ * production guard in src/app/actions/organisations.ts.
+ *
+ * `confirmDuplicateName` + `duplicateOverrideReason` support a two-step
+ * flow: a legal-entity-name collision (case/whitespace-insensitive) with an
+ * existing client returns a warning instead of silently creating a
+ * duplicate; the caller re-submits with `confirmDuplicateName: true` and a
+ * reason to proceed. A duplicate creditor GSTIN is always rejected outright
+ * -- a GSTIN identifies one legal entity, so there is no legitimate override.
+ */
+export const createOrganisationSchema = z
+  .object({
+    clientCode: z
+      .string()
+      .trim()
+      .min(2, "Client code is required")
+      .max(20)
+      .regex(/^[A-Za-z0-9-]+$/, "Letters, digits and hyphens only"),
+    legalEntityName: z.string().trim().min(2, "Legal entity name is required"),
+    creditorGstin: optionalGstinSchema,
+    udyamNumber: z.string().trim().nullable().optional(),
+    jitoMember: z.boolean().default(false),
+    confirmDuplicateName: z.boolean().default(false),
+    duplicateOverrideReason: z.string().trim().max(500).nullable().optional(),
+  })
+  .refine((v) => !v.confirmDuplicateName || !!v.duplicateOverrideReason?.trim(), {
+    message: "A reason is required to add a client with a name that already exists",
+    path: ["duplicateOverrideReason"],
+  });
 export type CreateOrganisationInput = z.infer<typeof createOrganisationSchema>;
 
 export const BULK_IMPORT_COLUMNS = [

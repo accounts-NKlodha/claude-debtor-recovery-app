@@ -86,4 +86,63 @@ describe("MemoryRepository", () => {
     // restore so other tests in this file see the default state
     await repo.setAutomationState(before, "test cleanup");
   });
+
+  it("rejects a duplicate client code", async () => {
+    const existing = mock.ORGANISATIONS[0];
+    await expect(
+      repo.createOrganisation({
+        clientCode: existing.clientCode,
+        legalEntityName: "Some Other Entity Pvt Ltd",
+        creditorGstin: null,
+        udyamNumber: null,
+        jitoMember: false,
+        confirmDuplicateName: false,
+        duplicateOverrideReason: null,
+      }),
+    ).rejects.toThrow(/client code/i);
+  });
+
+  it("rejects a duplicate creditor GSTIN outright, with no override", async () => {
+    const existing = mock.ORGANISATIONS.find((o) => o.creditorGstin)!;
+    await expect(
+      repo.createOrganisation({
+        clientCode: "NKL-DUPGSTIN",
+        legalEntityName: "A Totally Different Name Pvt Ltd",
+        creditorGstin: existing.creditorGstin,
+        udyamNumber: null,
+        jitoMember: false,
+        confirmDuplicateName: false,
+        duplicateOverrideReason: null,
+      }),
+    ).rejects.toThrow(/gstin/i);
+  });
+
+  it("warns instead of creating on a legal-entity-name collision, then requires a reason to override", async () => {
+    const existing = mock.ORGANISATIONS[0];
+    const before = (await repo.listOrganisations()).length;
+
+    const warned = await repo.createOrganisation({
+      clientCode: "NKL-NAMECLASH",
+      legalEntityName: `  ${existing.legalEntityName.toUpperCase()}  `, // whitespace/case-insensitive match
+      creditorGstin: null,
+      udyamNumber: null,
+      jitoMember: false,
+      confirmDuplicateName: false,
+      duplicateOverrideReason: null,
+    });
+    expect(warned.status).toBe("duplicate_name_warning");
+    expect((await repo.listOrganisations()).length).toBe(before); // nothing created yet
+
+    const created = await repo.createOrganisation({
+      clientCode: "NKL-NAMECLASH",
+      legalEntityName: `  ${existing.legalEntityName.toUpperCase()}  `,
+      creditorGstin: null,
+      udyamNumber: null,
+      jitoMember: false,
+      confirmDuplicateName: true,
+      duplicateOverrideReason: "separate branch, confirmed by staff",
+    });
+    expect(created.status).toBe("created");
+    expect((await repo.listOrganisations()).length).toBe(before + 1);
+  });
 });

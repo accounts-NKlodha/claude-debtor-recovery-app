@@ -8,6 +8,7 @@ import type { NextConfig } from "next";
  *    dynamic server routes are not included in the export.
  */
 const isDesktop = process.env.BUILD_TARGET === "desktop";
+const isDev = process.env.NODE_ENV === "development";
 
 /**
  * Audit P2-4: responses disclosed `X-Powered-By: Next.js` and lacked CSP,
@@ -16,6 +17,12 @@ const isDesktop = process.env.BUILD_TARGET === "desktop";
  * available in `output: "export"` (desktop) builds -- Next.js ignores
  * `headers()` for static export, so the Tauri shell relies on its own CSP
  * (src-tauri/tauri.conf.json) instead.
+ *
+ * Dev-only relaxation: Next/Turbopack's dev runtime and React Fast Refresh
+ * use eval()-based module evaluation and an HMR websocket. A strict
+ * production `script-src`/`connect-src` blocks both and spams the console
+ * with CSP violations that have nothing to do with the app. The production
+ * policy (no 'unsafe-eval', no ws:) is unchanged.
  */
 const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
@@ -24,8 +31,14 @@ const securityHeaders = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
   {
     key: "Content-Security-Policy",
-    value:
-      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co; frame-ancestors 'none'",
+    value: [
+      "default-src 'self'",
+      `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      `connect-src 'self' https://*.supabase.co${isDev ? " ws://localhost:* http://localhost:*" : ""}`,
+      "frame-ancestors 'none'",
+    ].join("; "),
   },
 ];
 
