@@ -22,11 +22,24 @@ with Supabase (Mumbai `ap-south-1`) for Postgres + Auth + Storage. This is the
 > dump-and-restore into a new `ap-south-1` project). This is a genuine
 > deviation from the PRD §13/§14 India-residency requirement and the
 > `ap-south-1` target above, and is **not resolved** by anything in this
-> document. Before real client data goes live: either provision a fresh
-> `ap-south-1` project and restore into it (see §6b's dump/restore
-> procedure), or get an explicit decision that Seoul is acceptable
-> (it very likely is not, given the residency requirement) — do not treat
-> the Gate B project as production-ready as-is on residency grounds alone.
+> document.
+>
+> **Mumbai production-bootstrap region note (2026-09-13/14):** the project
+> subsequently provisioned and named **"Mumbai Debtor recovery"**
+> (`igagfxgzlojqrkaawnzx`), explicitly intended to be the real production
+> environment, was **also not created in `ap-south-1`** — `supabase projects
+> list` and `supabase backups list` both report its actual region as
+> **`ap-southeast-2` (Sydney, Australia)**. This was discovered live during
+> the bootstrap (see `docs/MUMBAI_BOOTSTRAP.md`) and reported to the task
+> owner before any further work proceeded. The project's display name is not
+> evidence of its region — always confirm via `supabase projects list`
+> (`"region"` field), never by name alone. **India-residency is still not
+> satisfied by any project provisioned in this session.** Before real client
+> data goes live: provision a fresh project with region explicitly confirmed
+> as `ap-south-1` at creation time, then run the same migration-application
+> and admin-bootstrap procedure documented in `docs/MUMBAI_BOOTSTRAP.md` and
+> `docs/ADMIN_BOOTSTRAP.md` against it — do not treat either the Seoul or the
+> "Mumbai" (Sydney) project as production-ready on residency grounds alone.
 
 ## 2. Configure
 
