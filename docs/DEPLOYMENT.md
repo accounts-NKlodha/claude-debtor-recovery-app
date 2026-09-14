@@ -231,6 +231,19 @@ short pointer plus the headline facts.**
 - Repeatable tooling exists: [`scripts/backup-database.ps1`](../scripts/backup-database.ps1)
   and [`scripts/restore-database.ps1`](../scripts/restore-database.ps1) —
   both tested for real (see 6a below), not just documented.
+- **Daily scheduled backup is operational** (2026-09-15): the
+  `DebtorRecovery-Production-Backup` Windows Task Scheduler task
+  ([`scripts/install-backup-task.ps1`](../scripts/install-backup-task.ps1) +
+  [`scripts/backup-retention.ps1`](../scripts/backup-retention.ps1)) was
+  registered by the operator (a deliberate human-approval step, not
+  self-registered — production-credential-adjacent automation goes through
+  review here) and proven by manually triggering the *registered task*
+  itself through Task Scheduler: `LastTaskResult = 0`, a genuine new
+  checksum-verified backup produced. Runs daily at 23:30 IST **only while
+  the operator stays logged on** — see
+  [disaster-recovery/index.md](disaster-recovery/index.md) §2 and §16a-§16b
+  for the full detail and that limitation. **Off-site encrypted copy is
+  still not configured** — see that doc's §15.
 - Weekly-or-better **restore test** into a disposable environment; confirm
   one full case audit trail reconstructs (acceptance scenario 13).
 - Google Drive secondary copy is allowed but is **not** the sole evidence store.

@@ -8,8 +8,13 @@
   Uses `supabase db dump --linked`, which runs pg_dump inside a Docker
   container using the CLI's own pre-authenticated access-token session
   (the same session `supabase link`/`db push` already use throughout this
-  repo's history) -- never the raw database password. Requires Docker
-  Desktop running locally.
+  repo's history, stored in Windows Credential Manager under "Supabase
+  CLI:supabase" for the Windows user that ran `supabase login`) -- never
+  the raw database password. Requires Docker Desktop running locally.
+  Resolves the Supabase CLI from this repo's own devDependency
+  (`node_modules/.bin/supabase` via `npx`), not a global/ad-hoc install --
+  deterministic, no network install prompt possible during an unattended
+  run.
 
   Safety:
     - Requires -ProjectRef to be passed explicitly and refuses to run if it
@@ -22,13 +27,26 @@
     - Fails loudly (non-zero exit, clear message) on any error: Docker not
       running, CLI not linked, dump command failing, or the output file
       being missing/empty.
-    - Prints a SHA-256 checksum of the resulting file so its integrity can
-      be verified later (e.g. after copying off-site).
+    - Prints and writes to a log file a SHA-256 checksum of each resulting
+      file so integrity can be verified later (e.g. after copying off-site).
+    - Uses a named Mutex ("Global\DebtorRecovery-Backup-Database") around
+      the whole run so two overlapping invocations (e.g. a manual run
+      colliding with a scheduled one) cannot interleave writes or leave a
+      half-written file behind; a second instance fails fast with a clear
+      message instead of silently corrupting anything.
+    - No interactive prompts on a normal successful run: CLI auth comes
+      from the already-stored Credential Manager session (see above), the
+      CLI binary comes from this repo's own devDependency (no npx install
+      prompt), and every failure path exits non-zero instead of blocking.
 
 .PARAMETER ProjectRef
   The Supabase project ref this backup is expected to target (e.g.
   "igagfxgzlojqrkaawnzx"). Required -- there is no default, so this script
   can never be run "blind" against whatever happens to be linked.
+
+.PARAMETER LogFile
+  Path to append structured, secret-free log lines to. Defaults to
+  backups\backup-log.txt (gitignored, alongside the backups themselves).
 
 .EXAMPLE
   .\scripts\backup-database.ps1 -ProjectRef igagfxgzlojqrkaawnzx
@@ -38,15 +56,49 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ProjectRef,
 
-    [string]$OutputDir = (Join-Path $PSScriptRoot "..\backups")
+    [string]$OutputDir,
+
+    [string]$LogFile
 )
 
 $ErrorActionPreference = "Stop"
 
+# $PSScriptRoot is not reliably populated while parameter DEFAULT VALUES
+# are being evaluated (confirmed live: empty under `powershell.exe -File`
+# with a Mandatory parameter present, even though it is populated a moment
+# later in the script body) -- so defaults that depend on it are resolved
+# here instead, after the param block has finished binding.
+if (-not $PSBoundParameters.ContainsKey('OutputDir')) { $OutputDir = Join-Path $PSScriptRoot "..\backups" }
+if (-not $PSBoundParameters.ContainsKey('LogFile')) { $LogFile = Join-Path $PSScriptRoot "..\backups\backup-log.txt" }
+
+function Write-Log($msg) {
+    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $msg"
+    Write-Host $line
+    $logDir = Split-Path -Parent $LogFile
+    if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+    Add-Content -Path $LogFile -Value $line
+}
+
 function Fail($msg) {
+    Write-Log "FAILURE: $msg"
     Write-Error $msg
+    if ($mutexAcquired) { $mutex.ReleaseMutex() | Out-Null }
     exit 1
 }
+
+# 0. Acquire a cross-process lock so a second (e.g. manual) run started
+#    while a scheduled run is still in progress cannot write to overlapping
+#    output or interleave with the log file. A named Mutex is released
+#    automatically by Windows even if this process is killed/crashes, so it
+#    can never permanently wedge future runs.
+$mutex = New-Object System.Threading.Mutex($false, "Global\DebtorRecovery-Backup-Database")
+$mutexAcquired = $mutex.WaitOne([TimeSpan]::FromSeconds(5))
+if (-not $mutexAcquired) {
+    Write-Error "Another backup-database.ps1 run appears to be in progress (could not acquire the DebtorRecovery-Backup-Database lock within 5s). Refusing to run concurrently -- retry once the other run finishes."
+    exit 1
+}
+
+Write-Log "Backup run starting for project $ProjectRef"
 
 # 1. Docker must be running -- `supabase db dump` runs pg_dump in a container.
 try {
@@ -84,10 +136,9 @@ if (-not (Test-Path $OutputDir)) {
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $schemaFile = Join-Path $OutputDir "debtrecover-$ProjectRef-$timestamp-schema.sql"
 $dataFile = Join-Path $OutputDir "debtrecover-$ProjectRef-$timestamp-data.sql"
+$checksumFile = Join-Path $OutputDir "debtrecover-$ProjectRef-$timestamp.sha256"
 
-Write-Host "Backing up project $ProjectRef ..."
-Write-Host "  Schema -> $schemaFile"
-Write-Host "  Data   -> $dataFile"
+Write-Log "Backing up project $ProjectRef -> schema=$(Split-Path -Leaf $schemaFile) data=$(Split-Path -Leaf $dataFile)"
 
 # 4. Run both dumps. --linked uses the CLI's own access-token session; no
 #    -Password/-DbUrl parameter exists on this script because none is
@@ -116,22 +167,25 @@ foreach ($f in @($schemaFile, $dataFile)) {
     }
 }
 
-# 6. Checksums, for later integrity verification (e.g. after an off-site copy).
+# 6. Checksums, for later integrity verification (e.g. after an off-site
+#    copy) -- written to a sidecar .sha256 file next to the dumps (not just
+#    printed), so a scheduled/unattended run leaves durable proof, and so
+#    retention/off-site tooling can verify a backup before trusting it.
 $schemaHash = Get-FileHash -Path $schemaFile -Algorithm SHA256
 $dataHash = Get-FileHash -Path $dataFile -Algorithm SHA256
 $schemaSize = (Get-Item $schemaFile).Length
 $dataSize = (Get-Item $dataFile).Length
 
-Write-Host ""
-Write-Host "Backup complete." -ForegroundColor Green
-Write-Host "  Schema file: $schemaFile"
-Write-Host "    Size:      $schemaSize bytes"
-Write-Host "    SHA-256:   $($schemaHash.Hash)"
-Write-Host "  Data file:   $dataFile"
-Write-Host "    Size:      $dataSize bytes"
-Write-Host "    SHA-256:   $($dataHash.Hash)"
-Write-Host "  Timestamp:   $timestamp"
+@(
+    "$($schemaHash.Hash)  $(Split-Path -Leaf $schemaFile)"
+    "$($dataHash.Hash)  $(Split-Path -Leaf $dataFile)"
+) | Set-Content -Path $checksumFile -Encoding ascii
+
+Write-Log "Backup complete. schema=$schemaSize bytes data=$dataSize bytes checksum_file=$(Split-Path -Leaf $checksumFile) sha256_schema=$($schemaHash.Hash) sha256_data=$($dataHash.Hash)"
 Write-Host ""
 Write-Host "Both files are in .\backups\, which is gitignored -- they will never be committed."
 Write-Host "Restore schema first, then data (see docs/disaster-recovery/index.md)."
 Write-Host "Copy them off-site per the retention policy; do not leave the only copy on this machine."
+
+$mutex.ReleaseMutex() | Out-Null
+exit 0

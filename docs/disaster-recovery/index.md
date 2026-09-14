@@ -11,6 +11,17 @@ see §6-§9. This document distinguishes explicitly between what Supabase
 provides automatically, what this project must operate itself, what has
 actually been tested, and what remains a documented-but-unproven procedure.
 
+**Update (2026-09-15, backup-automation task): the daily scheduled backup is
+now operational.** The `DebtorRecovery-Production-Backup` Task Scheduler
+task was registered by the operator, then verified and **manually triggered
+through Task Scheduler itself** (not by running the script directly) — it
+produced a genuinely fresh, checksum-verified production backup and
+finished with Task Scheduler's own `LastTaskResult = 0` (success). See §16a
+for full detail and the one real, documented limitation: this task only
+runs while the registering Windows user (`NKLODHALAPTOP6\lovel`) is logged
+on — see §2 for what this means for effective RPO. **Off-site encrypted
+copy is still not configured** — see §15.
+
 ## 1. Current backup capability & plan limitations
 
 Production project `igagfxgzlojqrkaawnzx` (Sydney, `ap-southeast-2`) is on
@@ -37,7 +48,7 @@ yet, no dedicated ops team) — not by aspiration.
 
 | | V1 target | Basis |
 |---|---|---|
-| **RPO** (max acceptable data loss) | **≤ 24 hours**, achievable *only if* the daily scheduled backup (§16) is actually running — the honest RPO with a purely manual, unscheduled process is "however long since someone remembered to run it," which is not a target, it's a risk. | Free plan has no PITR; a daily logical dump is the best available floor without a plan upgrade. |
+| **RPO** (max acceptable data loss) | **Operational target: ≤ 24 hours, subject to successful daily task execution.** The `DebtorRecovery-Production-Backup` scheduled task (§16a) is registered and its mechanism proven (a manually-triggered scheduled run produced a genuine, verified backup with Task Scheduler reporting success). **One real caveat, not hypothetical**: the task is configured to run only while `NKLODHALAPTOP6\lovel` is logged on (Interactive logon type, by deliberate design — see §16a for why). **A fully logged-off laptop at 23:30 will not run that day's backup.** `StartWhenAvailable` is enabled, which — per Task Scheduler's documented behavior — means a missed run is started at the next opportunity the trigger's conditions are met (e.g. shortly after the next logon) rather than skipped outright; this session did not (and could not, within one sitting) empirically reproduce a real missed-then-recovered run, so treat this as the documented behavior of a verified setting, not as separately proven. Effective RPO is therefore ≤24h **on days the operator's machine stays logged in through 23:30**, and otherwise however long the machine stays logged off. | Free plan has no PITR; a daily logical dump is the best available floor without a plan upgrade. |
 | **RTO** (max acceptable time to restore) | **≤ 4 hours**, assuming the operator has rehearsed this exact procedure at least once (this task's restore, §8, is that rehearsal) and Docker is available. A cold, never-rehearsed attempt should be assumed to take considerably longer. | Manual restore into a fresh project: schema+data restore (minutes, proven in §8) + re-linking the app's environment variables + re-running `docs/ADMIN_BOOTSTRAP.md` for the first admin + smoke-testing — realistically 1-3 hours of operator time, budgeted to 4 for a first real incident. |
 
 **If/when real client data goes live and volume grows, upgrade to Pro**
@@ -352,29 +363,57 @@ data), a simple policy — not enterprise-grade, not speculative:
 - **Frequency**: daily once real client data exists in production;
   weekly is acceptable pre-launch while data is still effectively empty
   (nothing meaningful would be lost between weekly runs today).
-- **Retention**: keep the last **14 daily** backups + the last **6
-  monthly** backups (the 1st of each month's daily run, kept longer) —
-  simple enough to prune by hand or a five-line script, no rotation
-  infrastructure needed at this scale.
+- **Retention**: keep the last **14 daily** backups automatically, via
+  `scripts/backup-retention.ps1` (run as the second action of the
+  scheduled task, §16a) — implemented and tested (2026-09-15: pruned an
+  isolated 16-set scratch directory down to exactly the newest 14; refused
+  to run rather than prune a single remaining set to zero when misconfigured
+  with `-KeepCount 0`). It only ever prunes a **complete, checksum-verified**
+  set (schema + data + `.sha256`, and the files' actual hashes matching what
+  the `.sha256` records), and only once at least one newer valid set already
+  exists — an incomplete or checksum-mismatched set is left in place and
+  excluded from the retained-count, never silently deleted.
+- **Monthly preservation is a manual procedure, not automated logic** — kept
+  simple deliberately, per this task's own guidance to prefer a documented
+  manual step over fragile auto-detection: on or after the 1st of each
+  month, copy that day's verified backup set (all three files —
+  `*-schema.sql`, `*-data.sql`, `*.sha256`) into `backups\monthly-archive\`
+  (create it if absent; it is covered by the same `/backups/` `.gitignore`
+  entry). Keep the last **6** monthly-archive sets; delete older ones by
+  hand. This directory is intentionally outside the daily-retention script's
+  scope, so daily pruning can never touch a monthly archive copy.
 - **Encryption**: the dump files contain password hashes and business
   data — encrypt before any off-site copy (7-Zip AES-256, or `age`/`gpg`
   per the existing `docs/DEPLOYMENT.md` §6 guidance). Local-machine-only
   copies inside `.\backups\` (already outside git) are acceptable
   unencrypted for same-day operational use, but the off-site copy must be
   encrypted.
-- **Off-site location**: a location distinct from the machine running the
-  backup script — Google Drive is explicitly allowed as a *secondary*
-  copy per `docs/DEPLOYMENT.md` §6 ("not the sole evidence store"); any
-  other cloud storage the firm already trusts is equally acceptable.
+- **Off-site location — not yet configured, human action required.**
+  Checked this machine (2026-09-15) for any existing off-site sync tooling
+  (`rclone`, `azcopy`, `aws` CLI, `gdrive`, `rsync`, `7z`) — **none are
+  installed**. Per this task's explicit instruction, no destination or tool
+  has been invented or assumed. What *is* ready: `.\backups\` is
+  deterministic, gitignored, and every complete set carries its own
+  `.sha256` for verification after any copy — so whatever destination is
+  chosen, copying and verifying it is a simple, safe operation once the
+  operator picks one. Acceptable destination properties (per this task):
+  encrypted, separate from the production Supabase project, not GitHub, not
+  inside this repository, access restricted to appropriate firm personnel —
+  Google Drive was already named as an acceptable *secondary* copy in
+  `docs/DEPLOYMENT.md` §6, but no account/folder has actually been
+  configured or verified working. **This remains an explicit, open
+  operator task** — see §21 (Failure visibility) and the final report's
+  off-site status.
 - **Deletion/rotation**: delete backups older than the retention window
   above at the same time a new one is confirmed good (verify the new
   backup's checksum/size before deleting the oldest one it replaces —
-  never delete-then-verify).
+  never delete-then-verify) — this is exactly what `backup-retention.ps1`
+  does.
 
 ## 16. Automation decision
 
-**Recommended: manual-with-checklist now, Windows Task Scheduler once V1
-is live with real data.** Reasoning:
+**Windows Task Scheduler, running the existing backup script as the current
+Windows user.** Reasoning:
 
 - The backup script (§4) already uses the safest available credential
   path (the CLI's own pre-authenticated session) — **no automation choice
@@ -393,13 +432,167 @@ is live with real data.** Reasoning:
   upgrade *purely for backup automation* — both are real options, but
   premature before the firm has any real client data to protect; revisit
   once §2's upgrade trigger is hit.
-- **Task Scheduler setup** (when adopted): a daily trigger running
-  `powershell.exe -File "scripts\backup-database.ps1" -ProjectRef
-  igagfxgzlojqrkaawnzx` under the operator's own Windows account (so the
-  Supabase CLI's existing login session is available to it). Requires
-  that a human occasionally re-run `supabase login` if the access token
-  ever expires/is revoked — document this as a monthly operator check,
-  not "set and forget."
+- **Rejected**: running the task as `SYSTEM`, or in "run whether user is
+  logged on or not" mode. Both were considered and rejected — see §16a.
+
+### 16a. Authentication audit & unattended-execution hardening (2026-09-15)
+
+**How the backup script authenticates**: confirmed live via `cmdkey /list`
+that the Supabase CLI's access-token session is stored in Windows
+Credential Manager under `LegacyGeneric:target=Supabase CLI:supabase`,
+scoped to the Windows user who ran `supabase login` (on this machine:
+`lovel`). `supabase db dump --linked` uses this session — **no database
+password, access token, or service-role key is ever an input to the
+backup script.**
+
+**Why the task must run as that same logged-on user, not as `SYSTEM` or via
+a stored password**: Credential Manager entries like this are reliably
+readable by a process running in that user's own logged-on session. The
+two alternatives were both rejected:
+- `SYSTEM` has no access to `lovel`'s Credential Manager store at all — the
+  scheduled backup would fail every single run with an opaque auth error,
+  which is exactly the "appears healthy while silently failing" failure
+  mode item 2 warned against. **Not used, for this reason** — not merely
+  "to avoid bypassing an auth problem," but because it would concretely
+  break the mechanism this task is trying to operationalize.
+- "Run whether user is logged on or not" (Task Scheduler's `Password`/`S4U`
+  logon type) requires Windows to store and later unlock that user's
+  **Windows account password** to load their profile non-interactively —
+  a materially more sensitive credential than anything this backup
+  mechanism otherwise touches, and registering it requires Task Scheduler
+  to prompt for that password interactively (plus typically elevation).
+  This is exactly the "security-sensitive user-context choice" the task
+  instructed to stop and ask about rather than decide unilaterally — see
+  the installer script's own header comment and the human stop point below.
+
+**Chosen**: `install-backup-task.ps1` registers the task to run as the
+current Windows user with logon type `Interactive` ("run only when user is
+logged on"), standard (not elevated) privileges. This works as long as the
+registering user stays logged on (a locked screen still counts as logged
+on) through the scheduled time — sufficient for a single-operator machine
+left signed in overnight; **not** sufficient if the machine is regularly
+signed out or shut down before the scheduled time. If unattended-while-
+logged-off execution is ever required, that is a separate, deliberate
+decision needing its own review — not something to introduce silently.
+
+**A real bug found and fixed by testing the literal unattended command
+(task item 7), not just running the script interactively**: both
+`backup-database.ps1` and `backup-retention.ps1` used `$PSScriptRoot`
+inside their parameter block's *default value* expressions
+(`[string]$OutputDir = (Join-Path $PSScriptRoot "..\backups")`). Confirmed
+live (`_psroot_test2.ps1` reproduction, since removed) that `$PSScriptRoot`
+is empty during parameter default-value evaluation when a script is
+invoked non-interactively via `powershell.exe -NoProfile -NonInteractive
+-File ... ` with a mandatory parameter present — even though it becomes
+populated moments later in the script's own body. This ran without error
+every time in this session's earlier interactive/dot-sourced testing (P0-5
+through the prior disaster-recovery task), which is exactly why unattended
+testing under the real invocation form matters — it would have made the
+very first scheduled run fail immediately with `Join-Path : Cannot bind
+argument to parameter 'Path' because it is an empty string.` **Fixed**: both
+scripts now resolve `$PSScriptRoot`-dependent defaults in the script body
+(guarded by `$PSBoundParameters.ContainsKey(...)`), not in the param block.
+
+**Other unattended-execution hardening made to `backup-database.ps1`**
+(see the script's own header comment for full detail):
+- **No install-prompt risk**: the Supabase CLI is now pinned as an exact
+  `devDependency` (`supabase@2.117.0`) in `package.json`, so `npx supabase`
+  resolves deterministically to `node_modules/.bin/supabase` with no
+  network install or interactive "ok to proceed?" prompt possible.
+- **Concurrency safety**: a named Mutex
+  (`Global\DebtorRecovery-Backup-Database`) wraps the whole run. A second
+  invocation started while one is already in progress fails fast (within
+  5s) with a clear message instead of interleaving writes — tested live by
+  holding the mutex externally and confirming a concurrent script
+  invocation is rejected in ~5.5s with exit code 1.
+- **Durable, secret-free logging**: every run appends timestamped lines to
+  `backups\backup-log.txt` (start, per-file outcome, completion with sizes
+  and checksums, or failure reason) — see §20 (Logging) and §21 (Failure
+  visibility).
+- **Checksums are now written to disk**, not just printed:
+  `backups\<...>.sha256`, alongside each schema/data pair — needed so an
+  unattended run leaves durable, independently-verifiable proof, and so
+  `backup-retention.ps1` can verify a set before ever counting or pruning it.
+
+**Real unattended test performed (2026-09-15, exact literal command Task
+Scheduler will run)**:
+
+```
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "D:\Projects\Claude-Debtor recovery\scripts\backup-database.ps1" -ProjectRef igagfxgzlojqrkaawnzx
+```
+
+Result: exit code 0, a fresh schema file (132,558 bytes) and data file
+(52,896 bytes) produced, a `.sha256` checksum file written and
+independently re-verified (`sha256sum` outside the script matched exactly),
+no secret of any kind in console output or the log file. `backup-
+retention.ps1` was run immediately after (as the scheduled task's second
+action will) and correctly identified 1 valid, checksum-verified set with
+nothing yet eligible for pruning (below the 14-set threshold), while
+correctly leaving an older, pre-hardening backup set (which predates the
+`.sha256` sidecar file and is therefore "incomplete" by this script's
+definition) in place rather than deleting it.
+
+**Retention edge cases tested in an isolated scratch directory (not the
+real backups folder)**: 16 synthetic checksum-valid sets pruned down to
+exactly the newest 14, oldest 2 deleted; a single-set directory with
+`-KeepCount 0` correctly **refused** to run (`No files deleted`, exit code
+1) rather than ever pruning to zero.
+
+### 16b. Scheduled task registered and proven (2026-09-15)
+
+The operator ran `.\scripts\install-backup-task.ps1 -ProjectRef
+igagfxgzlojqrkaawnzx` themselves (the registration step this tooling
+deliberately does not perform on its own). Verified configuration
+(`Get-ScheduledTask` / `Get-ScheduledTaskInfo`) exactly matches what the
+installer requests — nothing silently different:
+
+| Property | Value |
+|---|---|
+| Task name | `DebtorRecovery-Production-Backup` |
+| Trigger | Daily, `StartBoundary = 2026-09-15T23:30:00+05:30`, `DaysInterval = 1` |
+| Principal | `UserId = lovel`, `LogonType = Interactive`, `RunLevel = Limited` (standard, not elevated) |
+| `MultipleInstances` | `IgnoreNew` (Task-Scheduler-level no-overlap, on top of the script's own Mutex, §16a) |
+| `StartWhenAvailable` | `True` |
+| `RestartCount` / `RestartInterval` | 3 / 15 minutes |
+| `ExecutionTimeLimit` | 2 hours |
+| Action 1 | `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "D:\Projects\Claude-Debtor recovery\scripts\backup-database.ps1" -ProjectRef igagfxgzlojqrkaawnzx`, working directory `D:\Projects\Claude-Debtor recovery` |
+| Action 2 | same form, `backup-retention.ps1`, no arguments |
+
+No secret appears in any of the above — only the (non-secret) project ref
+and file paths.
+
+**Manually triggered through Task Scheduler itself** (`Start-ScheduledTask
+-TaskName 'DebtorRecovery-Production-Backup'`), not by running the backup
+script directly — this specifically proves the *registered task*, not just
+the script in isolation, produces a real backup. The run took longer than
+the earlier direct-command test (≈3 minutes, vs. this run's ≈3m12s from
+`04:24:08` start to `04:27:20` completion — normal variance for a live
+network dump to the Sydney project, confirmed by watching the transient
+`pg_dump` container's own log stream through the data, table by table,
+rather than assuming success from a stalled file size).
+
+**Result**: Task Scheduler's own `Get-ScheduledTaskInfo.LastTaskResult`
+reported `0` (success) and `State` returned to `Ready`. A **new** backup
+set was produced — timestamp `20260915-042409`, distinct from both the
+earlier `20260915-025315` (prior disaster-recovery task) and
+`20260915-040424` (this task's own direct-command test) sets already
+present in `.\backups\`:
+
+| | Schema file | Data file |
+|---|---|---|
+| Size | 132,558 bytes | 52,896 bytes |
+| SHA-256 (from the `.sha256` sidecar) | `7D690A24...B9F2FCAB1` | `ADB5DAAC...638B08B7D3A` |
+| Independently re-verified | `sha256sum` run outside the script against both files — **matched exactly** | matched exactly |
+
+`backup-log.txt` recorded the full lifecycle for this run (`Backup run
+starting` → `Backup complete` with sizes/checksums → the retention step's
+own three log lines, run automatically as the task's second action,
+finding 2 valid sets and pruning nothing, since 2 « 14). No secret of any
+kind appears anywhere in the log. The backup content itself was spot-
+checked live via the transient dump container's log stream while it ran
+(the same `auth.users`/`auth.identities`/`auth.sessions`/`audit_events`
+tables verified in the original disaster-recovery task) — confirming this
+is genuinely the production data, not a stub.
 
 ## 17. Operator checklist (routine backup)
 
@@ -472,3 +665,67 @@ if, at any point:
   token, service-role key, SMTP App Password) into chat — stop and ask
   the human to run that specific step themselves, exactly as this task's
   instructions require.
+
+## 20. Logging
+
+Every `backup-database.ps1` and `backup-retention.ps1` run appends
+timestamped, plain-text lines to `backups\backup-log.txt` (gitignored,
+alongside the backups themselves — never committed, machine-local). One
+file answers, for any given day:
+
+- **When a backup started**: `<timestamp> Backup run starting for project
+  <ref>`.
+- **When it completed, and whether it succeeded**: `<timestamp> Backup
+  complete. schema=<bytes> bytes data=<bytes> bytes checksum_file=<name>
+  sha256_schema=<hash> sha256_data=<hash>` on success; `<timestamp>
+  FAILURE: <reason>` on any failure path (Docker not running, wrong
+  project linked, dump command failed, output file missing/empty).
+- **Generated backup filenames**: logged explicitly at both start
+  (`schema=... data=...`) and completion.
+- **Checksum verification result**: the SHA-256 of each file is logged at
+  completion, and `backup-retention.ps1` logs a `FAILED checksum
+  verification` line for any set whose files no longer match their
+  recorded `.sha256` (and refuses to delete or count that set — §15).
+
+**Never logged, by construction** — none of these are ever inputs to
+either script, so there is nothing to accidentally log: the database
+password, the Supabase access token, the service-role key, the Gmail SMTP
+App Password, or any connection string containing a secret. The log
+contains only: timestamps, the project ref (not secret), filenames, byte
+sizes, and SHA-256 checksums (a checksum is a one-way hash of the backup
+content, not a secret itself).
+
+## 21. Failure visibility
+
+How an operator checks whether a given day's scheduled backup succeeded,
+without any notification service (explicitly out of scope for this task):
+
+1. **Task Scheduler**: open Task Scheduler → Task Scheduler Library → find
+   `DebtorRecovery-Production-Backup`. Check the **Last Run Result**
+   column: `0x0` (technically `(0)` / "The operation completed
+   successfully") means the task's actions ran without Windows itself
+   reporting a launch failure. **This alone does not prove the backup
+   succeeded** — a script can exit non-zero and Task Scheduler still
+   reports the task as having run; always cross-check with the log (next
+   step).
+2. **`backups\backup-log.txt`**: find the most recent `Backup run
+   starting` line and confirm it is followed by a `Backup complete` line
+   (success) rather than `FAILURE:` (failure) or nothing at all (the run
+   never got that far, or is still in progress/hung).
+3. **`backups\` directory itself**: confirm a schema file, data file, and
+   `.sha256` file exist with today's date/timestamp in the filename, and
+   that the schema/data files' sizes are non-zero and roughly consistent
+   with prior runs (a schema file dramatically smaller than usual, e.g.
+   near-zero bytes, indicates a problem even if the script reported
+   success).
+4. **What counts as a failed or missing backup**: no new timestamped set
+   for the expected day; a `FAILURE:` log line; a `.sha256` file whose
+   recorded hash doesn't match the actual file (run
+   `Get-FileHash -Algorithm SHA256` on the file and compare); or the Task
+   Scheduler entry itself missing/disabled.
+
+A monthly check that `supabase login`'s stored session is still valid is
+also worth doing (§16a) — a backup can start failing not because anything
+in this repository changed, but because the underlying CLI session
+expired or was revoked; the log's `FAILURE:` line for a Docker/auth-shaped
+error is the signal to check that first.

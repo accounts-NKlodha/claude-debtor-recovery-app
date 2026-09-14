@@ -55,11 +55,18 @@ government filing**.
       `ap-south-1` is no longer mandatory; the current production project is
       `ap-southeast-2` (Sydney), business-accepted, see
       `docs/MUMBAI_BOOTSTRAP.md`); migrations applied; RLS test plan run.
-- [ ] Daily backup + one successful restore test recorded.
-      *(one successful real backup+restore test IS now recorded — 2026-09-15,
-      see `docs/disaster-recovery/index.md`. Daily cadence itself is not yet
-      operationalized — still a manual, on-demand script, not a scheduled
-      task; see §16 of that doc for the Task Scheduler recommendation.)*
+- [x] Daily backup + one successful restore test recorded.
+      *(2026-09-15: one successful real backup+restore test is recorded
+      (`docs/disaster-recovery/index.md` §7-§9), and the
+      `DebtorRecovery-Production-Backup` Windows Task Scheduler task is now
+      registered and proven — manually triggered through Task Scheduler
+      itself, `LastTaskResult = 0`, produced a genuine new checksum-verified
+      backup set (§16a-§16b of that doc). One real limitation: the task
+      only runs while `NKLODHALAPTOP6\lovel` stays logged on — a fully
+      logged-off laptop at 23:30 skips that day's run (`StartWhenAvailable`
+      is enabled and should catch up at next logon per Task Scheduler's
+      documented behavior, not separately proven in this session). Off-site
+      encrypted copy is still NOT configured — see that doc's §15.)*
 - [ ] Kill switch reachable by Admin; pause/resume/skip require a reason (audited).
 - [ ] Manual send + manual portal filing paths verified working alongside automation.
 - [ ] Error budget + weekly automation-error review scheduled.
