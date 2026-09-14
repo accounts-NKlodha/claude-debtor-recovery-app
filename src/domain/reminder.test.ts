@@ -4,6 +4,7 @@ import {
   applyReminderDeliveryFailed,
   applyReminderSent,
   buildReminderMessage,
+  buildReminderSubject,
 } from "./reminder";
 import type { RecoveryCase } from "@/contract/types";
 
@@ -40,6 +41,21 @@ describe("buildReminderMessage", () => {
     expect(msg).toContain("Vertex Polymers LLP");
     expect(msg).toContain("VTX/2026/1305");
     expect(msg).toMatch(/₹55,000/);
+  });
+});
+
+describe("buildReminderSubject", () => {
+  it("is deterministic for the same input (idempotency/audit requirement)", () => {
+    const input = { legalEntityName: "Vertex Polymers LLP", invoiceNumber: "VTX/2026/1305" };
+    expect(buildReminderSubject(input)).toBe(buildReminderSubject(input));
+    expect(buildReminderSubject(input)).toContain("VTX/2026/1305");
+    expect(buildReminderSubject(input)).toContain("Vertex Polymers LLP");
+  });
+
+  it("omits the invoice reference when none is known", () => {
+    const subject = buildReminderSubject({ legalEntityName: "Vertex Polymers LLP", invoiceNumber: null });
+    expect(subject).not.toContain("Invoice");
+    expect(subject).toContain("Vertex Polymers LLP");
   });
 });
 

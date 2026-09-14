@@ -29,6 +29,15 @@ export function buildReminderMessage(input: {
   );
 }
 
+/** Subject line for the email channel -- deterministic (no timestamp/random
+ * content) so the same logical reminder always produces the same subject,
+ * matching the body's determinism (idempotency/audit -- email-delivery task). */
+export function buildReminderSubject(input: { legalEntityName: string; invoiceNumber: string | null }): string {
+  return input.invoiceNumber
+    ? `Payment reminder — Invoice ${input.invoiceNumber} (${input.legalEntityName})`
+    : `Payment reminder (${input.legalEntityName})`;
+}
+
 /** Case status -> next status after the initial reminder is handed to the adapter. */
 export function applyReminderSent(kase: CaseInput): { updatedCase: RecoveryCase; note: string } {
   const transition = advance(caseToWorkflowState(kase), { type: "REMINDER_SENT" });

@@ -3,6 +3,19 @@
  * Env-driven so the same build runs against mocks (desktop/pilot) or real
  * providers (self-hosted). Government-portal adapters are capped at "assist"
  * regardless of automation mode (PRD §5, §11).
+ *
+ * `email` is the one capability with a real, production-ready provider
+ * (Gmail SMTP + Google App Password -- see docs/email-delivery/index.md).
+ * Its selection is fail-closed like `src/server/repo.ts`'s data-layer
+ * selection: in production it is ALWAYS the real adapter, never the mock,
+ * regardless of `ADAPTER_PROFILE` -- forgetting to set that variable in
+ * production must never silently degrade to fake sends. Outside
+ * production, `ADAPTER_PROFILE=live` opts a developer into the real
+ * adapter locally (e.g. for the one-off live-send acceptance test); the
+ * default outside production remains the mock. Every other capability
+ * (whatsapp, gstPortal, msmePortal, ocr, ...) has no real provider yet and
+ * stays mocked regardless of profile/environment -- implementing those is
+ * explicitly out of scope for the email-delivery task.
  */
 
 import type {
@@ -14,6 +27,8 @@ import type {
   PaymentGatewayAdapter,
   ReplyClassifierAdapter,
 } from "@/contract/adapters";
+import { isProductionRuntime } from "@/lib/config/production";
+import { gmailSmtp } from "./gmail-smtp";
 import {
   mockCalendar,
   mockGmail,
@@ -50,11 +65,7 @@ const mockSet: AdapterSet = {
 };
 
 export function getAdapters(): AdapterSet {
-  switch (provider) {
-    case "mock":
-      return mockSet;
-    // case "live": return liveSet;  // wired when real providers are provisioned
-    default:
-      return mockSet;
-  }
+  const useLiveEmail = isProductionRuntime() || provider === "live";
+  if (!useLiveEmail) return mockSet;
+  return { ...mockSet, email: gmailSmtp };
 }

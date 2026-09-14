@@ -15,6 +15,8 @@ Adapter operations: send template/text, send secure-link message, receive webhoo
 
 Adapter operations: send email, receive/reconcile replies, preserve Message-ID/thread headers, attachments/secure links, delivery/bounce metadata. Central firm account initially. App-password use must be isolated and replaceable.
 
+**Status: outbound send is implemented** (`src/adapters/gmail-smtp.ts`, Gmail SMTP + Google App Password, no OAuth) — see `docs/email-delivery/index.md` for the full design, secret-handling controls, idempotency and retry policy. Attachments/secure-link email and inbound reply reconciliation via this channel are not implemented (debtor replies are recorded manually today, see `docs/workflow-durability/index.md` §"debtor_replies"). Message-ID is preserved (`communications.provider_message_id`); no bounce-webhook metadata exists for plain Gmail SMTP (would need Workspace API-level integration).
+
 ### Payment
 
 Adapter operations: create payment request if used, receive gateway webhook, store screenshot/proof, reconcile client confirmation. Gateway choice is open.

@@ -36,6 +36,7 @@
 import type {
   CaseHearing,
   Communication,
+  CommunicationDelivery,
   DdRecord,
   Debtor,
   DebtorReply,
@@ -121,6 +122,10 @@ export interface Repository {
   listHearingsForCase(caseId: string): Promise<CaseHearing[]>;
   /** Inbound debtor replies recorded for this case (P0-5 §7). */
   listDebtorRepliesForCase(caseId: string): Promise<DebtorReply[]>;
+  /** Per-attempt delivery telemetry for one communication, oldest first
+   * (email-delivery task) -- used both to determine the next attempt
+   * number and to show operators send/retry history. */
+  listDeliveriesForCommunication(communicationId: string): Promise<CommunicationDelivery[]>;
 
   // -- cross-case lists (already client/org-filtered by the caller's session) --
   listAllCommunications(): Promise<Communication[]>;
@@ -179,16 +184,28 @@ export interface Repository {
   ): Promise<{ payment: PaymentRecord; updatedCase: RecoveryCase }>;
 
   /**
-   * Send the initial reminder for a case in `active` status (PRD §5/§8):
-   * builds the message, runs it through the messaging adapter under the
-   * retry-once-then-urgent-task policy, records the communication, and
-   * advances the case (sent -> delivered -> 24h timer started, or a
-   * both-channels-failed contact-correction task on adapter failure).
+   * Send the initial reminder for a case in `active` status (PRD §5/§8) on
+   * every channel the debtor has a real address for (WhatsApp mobile,
+   * email address) -- builds the message, runs each channel through its
+   * adapter under the retry-once-then-urgent-task policy with a durable,
+   * database-enforced idempotency key per channel (email-delivery task
+   * §6/§7: a retried call never re-sends a channel that already reached a
+   * terminal 'sent' state), records one `communications` row per attempted
+   * channel, and advances the case once (sent -> delivered -> 24h timer
+   * started) only if at least one channel succeeded, or raises a
+   * contact-correction task if every attempted channel failed.
+   *
+   * `ambiguous` is true if any channel's prior attempt was left in an
+   * unknown state (e.g. a crash between the SMTP call and persisting its
+   * outcome) and required an explicit operator acknowledgement
+   * (`forceRetryAfterAmbiguous`) to proceed -- see
+   * docs/email-delivery/index.md's "ambiguous outcome" section.
    */
   sendInitialReminder(
     caseId: string,
     actor: MutationActor,
-  ): Promise<{ case: RecoveryCase; communication: Communication }>;
+    options?: { forceRetryAfterAmbiguous?: boolean },
+  ): Promise<{ case: RecoveryCase; communications: Communication[]; ambiguous: boolean }>;
 
   /**
    * GST assisted-notification flow (PRD §11). Government-portal actions cap

@@ -26,6 +26,7 @@ import {
   applyReminderDeliveryFailed,
   applyReminderSent,
   buildReminderMessage,
+  buildReminderSubject,
 } from "@/domain/reminder";
 import { applyGstAutomationFailed, applyGstFiled, applyGstPrepared } from "@/domain/gst";
 import { applyMsmeAutomationFailed, applyMsmeFiled } from "@/domain/msme";
@@ -47,6 +48,7 @@ import type {
   AuditEventRow,
   CalendarEventRow,
   CaseHearingRow,
+  CommunicationDeliveryRow,
   CommunicationRow,
   Database,
   DdRecordRow,
@@ -62,6 +64,7 @@ import type {
 import type {
   CaseHearing,
   Communication,
+  CommunicationDelivery,
   DdRecord,
   Debtor,
   DebtorReply,
@@ -171,6 +174,7 @@ function toCommunication(row: CommunicationRow): Communication {
     threadRef: row.thread_ref,
     deliveryStatus: row.delivery_status,
     hasSecureLink: row.has_secure_link,
+    idempotencyKey: row.idempotency_key,
     replyClassification: row.reply_classification,
     reviewedById: row.reviewed_by_id,
     createdAt: row.created_at,
@@ -254,6 +258,21 @@ function toHearing(row: CaseHearingRow): CaseHearing {
     notes: row.notes,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function toDelivery(row: CommunicationDeliveryRow): CommunicationDelivery {
+  return {
+    id: row.id,
+    organisationId: row.organisation_id,
+    communicationId: row.communication_id,
+    attempt: row.attempt,
+    status: row.status,
+    adapterOutcome: row.adapter_outcome,
+    provider: row.provider,
+    providerMessageId: row.provider_message_id,
+    errorDetail: row.error_detail,
+    occurredAt: row.occurred_at,
   };
 }
 
@@ -533,6 +552,16 @@ export class SupabaseRepository implements Repository {
       .eq("case_id", caseId)
       .order("received_at", { ascending: false });
     return unwrap(res, "listDebtorRepliesForCase").map(toReply);
+  }
+
+  async listDeliveriesForCommunication(communicationId: string) {
+    const supabase = await this.db();
+    const res = await supabase
+      .from("communication_deliveries")
+      .select("*")
+      .eq("communication_id", communicationId)
+      .order("attempt", { ascending: true });
+    return unwrap(res, "listDeliveriesForCommunication").map(toDelivery);
   }
 
   async listAllCommunications() {
@@ -903,10 +932,128 @@ export class SupabaseRepository implements Repository {
     };
   }
 
+  /**
+   * Runs the durable, idempotent send sequence for one channel of the
+   * initial reminder (email-delivery task §6/§7):
+   *  1. begin_communication_send -- acquires the durable row BEFORE any
+   *     SMTP/adapter call; a retry with the same idempotency key returns
+   *     the existing row instead of creating a second one.
+   *  2. If that row already reached a terminal 'sent' status, short-circuit
+   *     -- no adapter call, no duplicate send.
+   *  3. begin_delivery_attempt -- records the attempt is starting, before
+   *     the adapter call; refuses to start a new attempt while the latest
+   *     one is still 'queued' (ambiguous: a prior attempt's outcome was
+   *     never persisted) unless the caller explicitly forces past it.
+   *  4. Runs the adapter under the existing retry-once policy
+   *     (src/orchestrator/run-adapter.ts).
+   *  5. complete_delivery_attempt -- persists the definitive outcome. Case
+   *     state is deliberately NOT touched here (p_case: null) -- with two
+   *     channels now real, the case's own transition is computed once,
+   *     after every channel has been attempted, by the caller.
+   */
+  private async sendReminderChannel(
+    supabase: Client,
+    caseId: string,
+    channel: "whatsapp" | "email",
+    to: string,
+    templateKey: string,
+    templateVersion: number,
+    subject: string | null,
+    body: string,
+    actor: MutationActor,
+    forceRetryAfterAmbiguous: boolean,
+  ): Promise<{
+    communication: Communication;
+    outcome: "success" | "already_sent" | "retryable_failure" | "permanent_failure" | "human_action_required" | "drift_detected";
+    ambiguousBlock: boolean;
+    blockedReason: string | null;
+  }> {
+    const idempotencyKey = `reminder-initial:${channel}:${caseId}:${new Date().toISOString().slice(0, 10)}`;
+
+    const begun = await callWriteRpc<{ communication: CommunicationRow; isNew: boolean }>(
+      supabase,
+      "begin_communication_send",
+      {
+        p_case_id: caseId,
+        p_channel: channel,
+        p_idempotency_key: idempotencyKey,
+        p_template_key: templateKey,
+        p_template_version: templateVersion,
+        p_subject: subject,
+        p_body: body,
+        p_reason: `Initial reminder (${channel})`,
+        p_expected_actor_id: actor.actorId,
+      },
+    );
+    const comm = toCommunication(begun.communication);
+    if (!begun.isNew && comm.deliveryStatus === "sent") {
+      return { communication: comm, outcome: "already_sent", ambiguousBlock: false, blockedReason: null };
+    }
+
+    const existingDeliveries = await this.listDeliveriesForCommunication(comm.id);
+    const nextAttempt = existingDeliveries.length + 1;
+
+    const begunAttempt = await callWriteRpc<{ blocked: boolean; blockedReason: string | null; delivery: CommunicationDeliveryRow }>(
+      supabase,
+      "begin_delivery_attempt",
+      {
+        p_communication_id: comm.id,
+        p_attempt: nextAttempt,
+        p_reason: `Initial reminder (${channel}) attempt ${nextAttempt}`,
+        p_expected_actor_id: actor.actorId,
+        p_force_after_ambiguous: forceRetryAfterAmbiguous,
+      },
+    );
+    if (begunAttempt.blocked) {
+      return { communication: comm, outcome: "retryable_failure", ambiguousBlock: true, blockedReason: begunAttempt.blockedReason };
+    }
+
+    const adapter = channel === "whatsapp" ? getAdapters().whatsapp : getAdapters().email;
+    const sendOutcome = await runAdapter(
+      (key) =>
+        adapter.send({
+          idempotencyKey: key,
+          caseId,
+          channel,
+          to,
+          templateKey,
+          templateVersion,
+          subject: subject ?? undefined,
+          body,
+        }),
+      idempotencyKey,
+    );
+
+    const status: "sent" | "failed" = sendOutcome.result.outcome === "success" ? "sent" : "failed";
+    const completed = await callWriteRpc<{ delivery: CommunicationDeliveryRow; communication: CommunicationRow }>(
+      supabase,
+      "complete_delivery_attempt",
+      {
+        p_delivery_id: begunAttempt.delivery.id,
+        p_status: status,
+        p_adapter_outcome: sendOutcome.result.outcome,
+        p_provider_message_id: sendOutcome.result.providerRef,
+        p_error_detail: sendOutcome.result.errorCode,
+        p_case_id: caseId,
+        p_case: null,
+        p_reason: sendOutcome.urgentTask?.reason ?? sendOutcome.result.nextAction ?? `${channel} delivery ${status}`,
+        p_expected_actor_id: actor.actorId,
+      },
+    );
+
+    return {
+      communication: toCommunication(completed.communication),
+      outcome: sendOutcome.result.outcome,
+      ambiguousBlock: false,
+      blockedReason: null,
+    };
+  }
+
   async sendInitialReminder(
     caseId: string,
     actor: MutationActor,
-  ): Promise<{ case: RecoveryCase; communication: Communication }> {
+    options: { forceRetryAfterAmbiguous?: boolean } = {},
+  ): Promise<{ case: RecoveryCase; communications: Communication[]; ambiguous: boolean }> {
     const supabase = await this.db();
 
     const kase = await this.getCase(caseId);
@@ -928,36 +1075,70 @@ export class SupabaseRepository implements Repository {
       invoiceNumber: invoices[0]?.invoiceNumber ?? null,
       amountPaise: kase.principalOutstanding,
     });
+    const subject = buildReminderSubject({
+      legalEntityName: org?.legalEntityName ?? "our client",
+      invoiceNumber: invoices[0]?.invoiceNumber ?? null,
+    });
 
-    const idempotencyKey = `reminder-initial:${caseId}:${new Date().toISOString().slice(0, 10)}`;
-    const sendOutcome = await runAdapter(
-      (key) =>
-        getAdapters().whatsapp.send({
-          idempotencyKey: key,
+    const channels: { channel: "whatsapp" | "email"; to: string; templateKey: string; templateVersion: number; subject: string | null }[] = [];
+    if (debtor?.mobile) {
+      channels.push({ channel: "whatsapp", to: debtor.mobile, templateKey: "reminder_initial_v3", templateVersion: 3, subject: null });
+    }
+    if (debtor?.email) {
+      channels.push({ channel: "email", to: debtor.email, templateKey: "reminder_initial_email_v1", templateVersion: 1, subject });
+    }
+    if (channels.length === 0) {
+      throw new Error(
+        `sendInitialReminder: case ${caseId}'s debtor has no mobile or email on file -- nothing to send. Correct the debtor's contact details first.`,
+      );
+    }
+
+    const results: Awaited<ReturnType<SupabaseRepository["sendReminderChannel"]>>[] = [];
+    for (const c of channels) {
+      results.push(
+        await this.sendReminderChannel(
+          supabase,
           caseId,
-          channel: "whatsapp",
-          to: debtor?.mobile ?? "unknown",
-          templateKey: "reminder_initial_v3",
-          templateVersion: 3,
+          c.channel,
+          c.to,
+          c.templateKey,
+          c.templateVersion,
+          c.subject,
           body,
-        }),
-      idempotencyKey,
-    );
+          actor,
+          options.forceRetryAfterAmbiguous ?? false,
+        ),
+      );
+    }
 
-    const communicationPayload = {
-      channel: "whatsapp",
-      direction: "outbound",
-      templateKey: "reminder_initial_v3",
-      templateVersion: 3,
-      subject: null,
-      body,
-      providerMessageId: sendOutcome.result.providerRef,
-      threadRef: `thread-${caseId}`,
-      deliveryStatus: sendOutcome.result.outcome === "success" ? "sent" : "failed",
-      hasSecureLink: false,
-    };
+    const anySuccess = results.some((r) => r.outcome === "success" || r.outcome === "already_sent");
+    const anyAmbiguous = results.some((r) => r.ambiguousBlock);
+    const allFailedTerminally = results.every((r) => r.outcome !== "success" && r.outcome !== "already_sent") && !anyAmbiguous;
 
-    if (sendOutcome.result.outcome !== "success") {
+    let updatedCase: RecoveryCase;
+    if (anySuccess) {
+      const sent = applyReminderSent(kase);
+      // Demo/live simplification carried over unchanged from before this
+      // task: neither the mock WhatsApp adapter nor plain Gmail SMTP (no
+      // Workspace-level bounce webhook) gives a real delivery confirmation,
+      // so "adapter accepted the send" is treated as "delivered" for the
+      // 24h-timer transition -- see docs/email-delivery/index.md. The
+      // communication's own delivery_status stays honestly 'sent', not
+      // 'delivered' -- only the case-level timer semantics use this
+      // approximation, which already existed for WhatsApp.
+      const deliveredAt = new Date();
+      const delivered = applyReminderDelivered(sent.updatedCase, deliveredAt);
+      const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
+        p_case_id: caseId,
+        p_case: delivered.updatedCase,
+        p_action: "reminder.sent",
+        p_entity: "recovery_case",
+        p_reason: `${sent.note}; ${delivered.note}`,
+        p_communication: null,
+        p_expected_actor_id: actor.actorId,
+      });
+      updatedCase = toCase(updatedRow);
+    } else if (allFailedTerminally) {
       const sentPatch = applyReminderSent(kase);
       const failed = applyReminderDeliveryFailed(sentPatch.updatedCase, true);
       const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
@@ -965,51 +1146,22 @@ export class SupabaseRepository implements Repository {
         p_case: failed.updatedCase,
         p_action: "reminder.delivery_failed",
         p_entity: "recovery_case",
-        p_reason: `${sendOutcome.urgentTask?.reason ?? sendOutcome.result.errorCode ?? "adapter failure"} -- ${failed.note}`,
-        p_communication: communicationPayload,
+        p_reason: `Every attempted channel failed -- ${failed.note}`,
+        p_communication: null,
         p_expected_actor_id: actor.actorId,
       });
-      // apply_case_mutation returns only the case row (its Functions.Returns
-      // type is recovery_cases -- see 0006_production_write_rpcs.sql); the
-      // communication it inserted atomically is re-read here rather than
-      // trusted to be "the last one" some other way. This assumes no
-      // concurrent write to the same case's communications between the RPC
-      // call and this read, which holds for a single request handling one
-      // action -- flagged as a live-Supabase verification item, not proven here.
-      const communications = await this.listCommunicationsForCase(caseId);
-      return {
-        case: toCase(updatedRow),
-        communication: communications[communications.length - 1],
-      };
+      updatedCase = toCase(updatedRow);
+    } else {
+      // Ambiguous and/or a mix that isn't conclusively "every channel
+      // failed" -- do not advance or fail the case. Staying `active` makes
+      // a fresh click a safe, explicit operator-triggered retry rather
+      // than silently claiming either outcome (P0-5 §10 case-state
+      // invariant: a failed send must not falsely advance the workflow,
+      // and an ambiguous one must not either).
+      updatedCase = kase;
     }
 
-    const sent = applyReminderSent(kase);
-    // Demo simplification carried over from MemoryRepository: the mock
-    // adapter has no real delivery webhook, so delivery is simulated
-    // immediately rather than waiting for one. A live adapter's
-    // parseWebhook() result would drive this transition instead.
-    const deliveredAt = new Date();
-    const delivered = applyReminderDelivered(sent.updatedCase, deliveredAt);
-
-    const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
-      p_case_id: caseId,
-      p_case: delivered.updatedCase,
-      p_action: "reminder.sent",
-      p_entity: "recovery_case",
-      p_reason: `${sent.note}; ${delivered.note}`,
-      p_communication: {
-        ...communicationPayload,
-        deliveryStatus: "delivered",
-        deliveredAt: deliveredAt.toISOString(),
-      },
-      p_expected_actor_id: actor.actorId,
-    });
-
-    const communications = await this.listCommunicationsForCase(caseId);
-    return {
-      case: toCase(updatedRow),
-      communication: communications[communications.length - 1],
-    };
+    return { case: updatedCase, communications: results.map((r) => r.communication), ambiguous: anyAmbiguous };
   }
 
   async prepareGstNotification(

@@ -5,6 +5,7 @@
  */
 
 import type {
+  AdapterOutcome,
   AutomationMode,
   CaseStatus,
   Channel,
@@ -115,6 +116,11 @@ export interface Communication {
   hasSecureLink: boolean;
   replyClassification: ReplyClassification | null;
   reviewedById: UUID | null;
+  /** Durable send-intent key (`<flow>:<channel>:<caseId>:<date>`); a retry
+   * of the same logical send reuses this key instead of creating a second
+   * row (email-delivery task). Null for communications not created through
+   * the idempotent begin_communication_send() path. */
+  idempotencyKey: string | null;
   createdAt: Timestamp;
   deliveredAt: Timestamp | null;
 }
@@ -201,6 +207,26 @@ export interface DebtorReply {
   reviewedById: UUID | null;
   reviewedAt: Timestamp | null;
   receivedAt: Timestamp;
+}
+
+/** Per-attempt delivery telemetry for one communication (email-delivery
+ * task). `status` is the coarse delivery_status ('queued' while an SMTP
+ * call is in flight, 'sent' | 'failed' once resolved); `adapterOutcome`
+ * carries the finer retryable/terminal classification
+ * (AdapterOutcome) that `status` alone doesn't. `errorDetail` is always a
+ * fixed, non-sensitive error code -- never a raw exception or any
+ * credential-bearing text. */
+export interface CommunicationDelivery {
+  id: UUID;
+  organisationId: UUID;
+  communicationId: UUID;
+  attempt: number;
+  status: DeliveryStatus;
+  adapterOutcome: AdapterOutcome | null;
+  provider: string | null;
+  providerMessageId: string | null;
+  errorDetail: string | null;
+  occurredAt: Timestamp;
 }
 
 export interface AuditEvent {

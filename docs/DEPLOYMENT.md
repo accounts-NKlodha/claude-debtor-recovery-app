@@ -49,7 +49,19 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon>
 SUPABASE_SERVICE_ROLE_KEY=<service_role>      # server only, only for createAdminClient() -- see §3a
 DATABASE_URL=postgresql://...<region>...      # for migrations -- region per current business decision, see §1
 NEXT_PUBLIC_APP_URL=https://debtor.nklodha.in
-ADAPTER_PROFILE=mock                          # switch to "live" once providers are provisioned
+ADAPTER_PROFILE=mock                          # ignored for email in production -- see below; still gates whatsapp/gst/msme/etc.
+
+# Email delivery (Gmail SMTP + Google App Password -- docs/email-delivery/index.md).
+# Production always uses the real adapter regardless of ADAPTER_PROFILE; a
+# missing/malformed value here fails closed (no send), never falls back to
+# a mock. SMTP_APP_PASSWORD is the one secret -- server-only, never
+# NEXT_PUBLIC_*, never logged, never committed.
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_USER=<gmail address>
+SMTP_APP_PASSWORD=<google app password -- enter only in the secret manager>
+SMTP_FROM_ADDRESS=<gmail address>
+SMTP_FROM_NAME=N K Lodha & Co
 ```
 
 `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are the only two

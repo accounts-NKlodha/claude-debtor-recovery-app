@@ -129,8 +129,22 @@ export interface CommunicationRow {
   has_secure_link: boolean;
   reply_classification: Nullable<ReplyClassification>;
   reviewed_by_id: Nullable<string>;
+  idempotency_key: Nullable<string>;
   created_at: string;
   delivered_at: Nullable<string>;
+}
+
+export interface CommunicationDeliveryRow {
+  id: string;
+  organisation_id: string;
+  communication_id: string;
+  attempt: number;
+  status: DeliveryStatus;
+  adapter_outcome: Nullable<AdapterOutcome>;
+  provider: Nullable<string>;
+  provider_message_id: Nullable<string>;
+  error_detail: Nullable<string>;
+  occurred_at: string;
 }
 
 export interface WorkflowTaskRow {
@@ -298,7 +312,11 @@ export interface Database {
       >;
       communications: TableShape<
         CommunicationRow,
-        "id" | "created_at" | "delivery_status" | "has_secure_link"
+        "id" | "created_at" | "delivery_status" | "has_secure_link" | "idempotency_key"
+      >;
+      communication_deliveries: TableShape<
+        CommunicationDeliveryRow,
+        "id" | "status" | "occurred_at" | "attempt"
       >;
       workflow_tasks: TableShape<
         WorkflowTaskRow,
@@ -497,6 +515,44 @@ export interface Database {
           p_expected_actor_id?: string | null;
         };
         Returns: { case: RecoveryCaseRow; reply: DebtorReplyRow };
+      };
+      begin_communication_send: {
+        Args: {
+          p_case_id: string;
+          p_channel: Channel;
+          p_idempotency_key: string;
+          p_template_key: string | null;
+          p_template_version: number | null;
+          p_subject: string | null;
+          p_body: string;
+          p_reason: string | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: { communication: CommunicationRow; isNew: boolean };
+      };
+      begin_delivery_attempt: {
+        Args: {
+          p_communication_id: string;
+          p_attempt: number;
+          p_reason: string | null;
+          p_expected_actor_id?: string | null;
+          p_force_after_ambiguous?: boolean;
+        };
+        Returns: { blocked: boolean; blockedReason: string | null; delivery: CommunicationDeliveryRow };
+      };
+      complete_delivery_attempt: {
+        Args: {
+          p_delivery_id: string;
+          p_status: DeliveryStatus;
+          p_adapter_outcome: AdapterOutcome | null;
+          p_provider_message_id: string | null;
+          p_error_detail: string | null;
+          p_case_id: string;
+          p_case: Record<string, unknown> | null;
+          p_reason: string | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: { delivery: CommunicationDeliveryRow; communication: CommunicationRow; case: RecoveryCaseRow };
       };
     };
     Enums: {

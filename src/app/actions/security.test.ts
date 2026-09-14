@@ -279,6 +279,54 @@ describe("hearing.ts / ocr.ts / manual-invoice.ts / bulk-import.ts: authenticate
     expect(mock.TASKS.find((t) => t.id === task.id)?.resolvedAt).toBeNull();
   });
 
+  it("sendInitialReminderAction rejects with no session and never records a communication or sends anything", async () => {
+    authorizeStaffMutation.mockRejectedValue(new UnauthenticatedError());
+    const { sendInitialReminderAction } = await import("./reminders");
+    const org = mock.ORGANISATIONS[0];
+    const debtor = mock.insertDebtor({
+      id: "deb-security-test-reminder-unauth", organisationId: org.id, name: "Security Test Debtor Unauth",
+      mobile: "9800000001", email: "security-test-unauth@example.com", gstin: null, address: null,
+      contactVerified: true, totalDue: 10000,
+    });
+    const kase = mock.insertCase({
+      id: "case-security-test-reminder-unauth", organisationId: org.id, debtorId: debtor.id, status: "active",
+      automationMode: "assist", waitingOn: "system", automationStartedAt: new Date().toISOString(),
+      currentStep: "active", blocker: null, nextScheduledAction: null, nextScheduledAt: null,
+      eligibilityRoute: null, principalOutstanding: 10000, recoveredToDate: 0, assigneeId: null,
+      groupKey: null, createdAt: new Date().toISOString(), activatedAt: new Date().toISOString(), closedAt: null,
+    });
+    const before = mock.COMMUNICATIONS.length;
+
+    await expect(sendInitialReminderAction(kase.id)).rejects.toThrow(UnauthenticatedError);
+    expect(mock.COMMUNICATIONS.length).toBe(before);
+  });
+
+  it("sendInitialReminderAction attributes the audit entry to the real session actor, not any forged input", async () => {
+    authorizeStaffMutation.mockResolvedValue(STAFF_B);
+    const { sendInitialReminderAction } = await import("./reminders");
+    const org = mock.insertOrganisation({
+      id: "org-security-test-reminder", clientCode: "NKL-SECTEST-REM", legalEntityName: "Security Test Reminder Co",
+      creditorGstin: null, udyamNumber: null, jitoMember: false, createdAt: new Date().toISOString(),
+    });
+    const debtor = mock.insertDebtor({
+      id: "deb-security-test-reminder", organisationId: org.id, name: "Security Test Debtor",
+      mobile: "9800000000", email: "security-test@example.com", gstin: null, address: null,
+      contactVerified: true, totalDue: 10000,
+    });
+    const kase = mock.insertCase({
+      id: "case-security-test-reminder", organisationId: org.id, debtorId: debtor.id, status: "active",
+      automationMode: "assist", waitingOn: "system", automationStartedAt: new Date().toISOString(),
+      currentStep: "active", blocker: null, nextScheduledAction: null, nextScheduledAt: null,
+      eligibilityRoute: null, principalOutstanding: 10000, recoveredToDate: 0, assigneeId: null,
+      groupKey: null, createdAt: new Date().toISOString(), activatedAt: new Date().toISOString(), closedAt: null,
+    });
+
+    await sendInitialReminderAction(kase.id);
+    const audit = (await getRepo().listAuditLog(10)).find((a) => a.entityId === kase.id && a.action === "reminder.sent");
+    expect(audit?.actorId).toBe(STAFF_B.actorId);
+    expect(audit?.actorId).not.toBe("attacker-forged-id");
+  });
+
   it("recordDebtorReplyAction attributes the audit entry to the real session actor, not any forged input field", async () => {
     authorizeStaffMutation.mockResolvedValue(STAFF_B);
     const { recordDebtorReplyAction } = await import("./debtor-replies");

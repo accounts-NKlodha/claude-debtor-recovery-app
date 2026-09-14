@@ -14,6 +14,7 @@ import {
   applyReminderDeliveryFailed,
   applyReminderSent,
   buildReminderMessage,
+  buildReminderSubject,
 } from "@/domain/reminder";
 import { applyGstAutomationFailed, applyGstFiled, applyGstPrepared } from "@/domain/gst";
 import { applyMsmeAutomationFailed, applyMsmeFiled } from "@/domain/msme";
@@ -159,6 +160,9 @@ export class MemoryRepository implements Repository {
   }
   async listDebtorRepliesForCase(caseId: string) {
     return tick(mock.listDebtorRepliesForCase(caseId));
+  }
+  async listDeliveriesForCommunication(communicationId: string) {
+    return tick(mock.listDeliveriesForCommunication(communicationId));
   }
 
   async listAllCommunications() {
@@ -417,7 +421,70 @@ export class MemoryRepository implements Repository {
     return tick({ payment, updatedCase });
   }
 
-  async sendInitialReminder(caseId: string, actor: MutationActor) {
+  /** Mirrors SupabaseRepository.sendReminderChannel() exactly -- same
+   * begin/attempt/complete sequence, same idempotency semantics, backed by
+   * mock.beginCommunicationSend/beginDeliveryAttempt/completeDeliveryAttempt
+   * instead of the RPCs (email-delivery task, repository parity). */
+  private async sendReminderChannel(
+    caseId: string,
+    organisationId: string,
+    channel: "whatsapp" | "email",
+    to: string,
+    templateKey: string,
+    templateVersion: number,
+    subject: string | null,
+    body: string,
+    forceRetryAfterAmbiguous: boolean,
+  ): Promise<{
+    communication: Communication;
+    outcome: "success" | "already_sent" | "retryable_failure" | "permanent_failure" | "human_action_required" | "drift_detected";
+    ambiguousBlock: boolean;
+  }> {
+    const idempotencyKey = `reminder-initial:${channel}:${caseId}:${new Date().toISOString().slice(0, 10)}`;
+
+    const begun = mock.beginCommunicationSend({
+      organisationId,
+      caseId,
+      channel,
+      idempotencyKey,
+      templateKey,
+      templateVersion,
+      subject,
+      body,
+    });
+    if (!begun.isNew && begun.communication.deliveryStatus === "sent") {
+      return { communication: begun.communication, outcome: "already_sent", ambiguousBlock: false };
+    }
+
+    const nextAttempt = mock.listDeliveriesForCommunication(begun.communication.id).length + 1;
+    const begunAttempt = mock.beginDeliveryAttempt(organisationId, begun.communication.id, nextAttempt, forceRetryAfterAmbiguous);
+    if (begunAttempt.blocked) {
+      return { communication: begun.communication, outcome: "retryable_failure", ambiguousBlock: true };
+    }
+
+    const adapter = channel === "whatsapp" ? getAdapters().whatsapp : getAdapters().email;
+    const sendOutcome = await runAdapter(
+      (key) => adapter.send({ idempotencyKey: key, caseId, channel, to, templateKey, templateVersion, subject: subject ?? undefined, body }),
+      idempotencyKey,
+    );
+
+    const status: "sent" | "failed" = sendOutcome.result.outcome === "success" ? "sent" : "failed";
+    const completed = mock.completeDeliveryAttempt({
+      deliveryId: begunAttempt.delivery.id,
+      status,
+      adapterOutcome: sendOutcome.result.outcome,
+      providerMessageId: sendOutcome.result.providerRef,
+      errorDetail: sendOutcome.result.errorCode,
+    });
+
+    return { communication: completed.communication, outcome: sendOutcome.result.outcome, ambiguousBlock: false };
+  }
+
+  async sendInitialReminder(
+    caseId: string,
+    actor: MutationActor,
+    options: { forceRetryAfterAmbiguous?: boolean } = {},
+  ) {
     const kase = mock.getCase(caseId);
     if (!kase) throw new Error(`sendInitialReminder: case ${caseId} not found`);
     if (kase.status !== "active") {
@@ -435,82 +502,76 @@ export class MemoryRepository implements Repository {
       invoiceNumber: invoice?.invoiceNumber ?? null,
       amountPaise: kase.principalOutstanding,
     });
+    const subject = buildReminderSubject({
+      legalEntityName: org?.legalEntityName ?? "our client",
+      invoiceNumber: invoice?.invoiceNumber ?? null,
+    });
 
-    const idempotencyKey = `reminder-initial:${caseId}:${new Date().toISOString().slice(0, 10)}`;
-    const adapters = getAdapters();
-    const sendOutcome = await runAdapter(
-      (key) =>
-        adapters.whatsapp.send({
-          idempotencyKey: key,
+    const channels: { channel: "whatsapp" | "email"; to: string; templateKey: string; templateVersion: number; subject: string | null }[] = [];
+    if (debtor?.mobile) {
+      channels.push({ channel: "whatsapp", to: debtor.mobile, templateKey: "reminder_initial_v3", templateVersion: 3, subject: null });
+    }
+    if (debtor?.email) {
+      channels.push({ channel: "email", to: debtor.email, templateKey: "reminder_initial_email_v1", templateVersion: 1, subject });
+    }
+    if (channels.length === 0) {
+      throw new Error(
+        `sendInitialReminder: case ${caseId}'s debtor has no mobile or email on file -- nothing to send. Correct the debtor's contact details first.`,
+      );
+    }
+
+    const results: Awaited<ReturnType<MemoryRepository["sendReminderChannel"]>>[] = [];
+    for (const c of channels) {
+      results.push(
+        await this.sendReminderChannel(
           caseId,
-          channel: "whatsapp",
-          to: debtor?.mobile ?? "unknown",
-          templateKey: "reminder_initial_v3",
-          templateVersion: 3,
+          kase.organisationId,
+          c.channel,
+          c.to,
+          c.templateKey,
+          c.templateVersion,
+          c.subject,
           body,
-        }),
-      idempotencyKey,
-    );
+          options.forceRetryAfterAmbiguous ?? false,
+        ),
+      );
+    }
 
-    const communication = mock.insertCommunication({
-      id: `com-${nanoid(8)}`,
-      caseId,
-      organisationId: kase.organisationId,
-      channel: "whatsapp",
-      direction: "outbound",
-      templateKey: "reminder_initial_v3",
-      templateVersion: 3,
-      subject: null,
-      body,
-      providerMessageId: sendOutcome.result.providerRef,
-      threadRef: `thread-${caseId}`,
-      deliveryStatus: sendOutcome.result.outcome === "success" ? "sent" : "failed",
-      hasSecureLink: false,
-      replyClassification: null,
-      reviewedById: null,
-      createdAt: new Date().toISOString(),
-      deliveredAt: null,
-    } satisfies Communication);
+    const anySuccess = results.some((r) => r.outcome === "success" || r.outcome === "already_sent");
+    const anyAmbiguous = results.some((r) => r.ambiguousBlock);
+    const allFailedTerminally = results.every((r) => r.outcome !== "success" && r.outcome !== "already_sent") && !anyAmbiguous;
 
-    if (sendOutcome.result.outcome !== "success") {
+    let updatedCase: RecoveryCase;
+    if (anySuccess) {
+      const sent = applyReminderSent(kase);
+      const deliveredAt = new Date();
+      const delivered = applyReminderDelivered(sent.updatedCase, deliveredAt);
+      updatedCase = mock.mutateCase(caseId, delivered.updatedCase);
+      mock.appendAudit({
+        action: "reminder.sent",
+        entity: "recovery_case",
+        entityId: caseId,
+        reason: `${sent.note}; ${delivered.note}`,
+        actorId: actor.actorId,
+        actorRole: actor.actorRole,
+      });
+    } else if (allFailedTerminally) {
       const sentPatch = applyReminderSent(kase);
       const failed = applyReminderDeliveryFailed(sentPatch.updatedCase, true);
-      const updatedCase = mock.mutateCase(caseId, failed.updatedCase);
+      updatedCase = mock.mutateCase(caseId, failed.updatedCase);
       mock.appendAudit({
         action: "reminder.delivery_failed",
         entity: "recovery_case",
         entityId: caseId,
-        reason: `${sendOutcome.urgentTask?.reason ?? sendOutcome.result.errorCode ?? "adapter failure"} -- ${failed.note}`,
+        reason: `Every attempted channel failed -- ${failed.note}`,
         actorId: actor.actorId,
         actorRole: actor.actorRole,
       });
-      return tick({ case: updatedCase, communication });
+    } else {
+      updatedCase = kase;
     }
 
-    const sent = applyReminderSent(kase);
-    mock.mutateCase(caseId, sent.updatedCase);
-
-    // Demo simplification: the mock adapter has no real delivery webhook, so
-    // delivery is simulated immediately rather than waiting for one. A live
-    // adapter's parseWebhook() result would drive this transition instead.
-    const deliveredAt = new Date();
-    const delivered = applyReminderDelivered(sent.updatedCase, deliveredAt);
-    const updatedCase = mock.mutateCase(caseId, delivered.updatedCase);
-    const deliveredCommunication = mock.mutateCommunication(communication.id, {
-      deliveryStatus: "delivered",
-      deliveredAt: deliveredAt.toISOString(),
-    });
-
-    mock.appendAudit({
-      action: "reminder.sent",
-      entity: "recovery_case",
-      entityId: caseId,
-      reason: `${sent.note}; ${delivered.note}`,
-      actorId: actor.actorId,
-      actorRole: actor.actorRole,
-    });
-
-    return tick({ case: updatedCase, communication: deliveredCommunication });
+    return tick({ case: updatedCase, communications: results.map((r) => r.communication), ambiguous: anyAmbiguous });
   }
 
   async prepareGstNotification(caseId: string, input: GstComposeInput, actor: MutationActor) {
@@ -622,6 +683,7 @@ export class MemoryRepository implements Repository {
       threadRef: `thread-${caseId}`,
       deliveryStatus: "delivered",
       hasSecureLink: false,
+      idempotencyKey: null,
       replyClassification: null,
       reviewedById: null,
       createdAt: filedAt.toISOString(),
@@ -730,6 +792,7 @@ export class MemoryRepository implements Repository {
       threadRef: `thread-${caseId}`,
       deliveryStatus: "delivered",
       hasSecureLink: false,
+      idempotencyKey: null,
       replyClassification: null,
       reviewedById: null,
       createdAt: new Date().toISOString(),

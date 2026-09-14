@@ -7,6 +7,7 @@
 import type {
   CaseHearing,
   Communication,
+  CommunicationDelivery,
   DdRecord,
   Debtor,
   DebtorReply,
@@ -19,7 +20,7 @@ import type {
   WorkflowTask,
 } from "@/contract/types";
 import { CLIENT_SAFE_LABEL } from "@/contract/enums";
-import type { CaseStatus } from "@/contract/enums";
+import type { AdapterOutcome, CaseStatus, Channel, DeliveryStatus } from "@/contract/enums";
 import { estimateSuccessFee } from "@/domain/fees";
 
 const NOW = new Date("2026-09-11T09:30:00.000Z");
@@ -514,6 +515,7 @@ export const COMMUNICATIONS: Communication[] = [
     threadRef: "thread-1",
     deliveryStatus: "read",
     hasSecureLink: true,
+    idempotencyKey: null,
     replyClassification: null,
     reviewedById: null,
     createdAt: iso(-6, 5),
@@ -533,6 +535,7 @@ export const COMMUNICATIONS: Communication[] = [
     threadRef: "thread-1",
     deliveryStatus: "delivered",
     hasSecureLink: false,
+    idempotencyKey: null,
     replyClassification: "unclear",
     reviewedById: "user-1",
     createdAt: iso(-5, 8),
@@ -552,6 +555,7 @@ export const COMMUNICATIONS: Communication[] = [
     threadRef: "thread-2",
     deliveryStatus: "failed",
     hasSecureLink: true,
+    idempotencyKey: null,
     replyClassification: null,
     reviewedById: null,
     createdAt: iso(-4, 5),
@@ -571,6 +575,7 @@ export const COMMUNICATIONS: Communication[] = [
     threadRef: "thread-3",
     deliveryStatus: "delivered",
     hasSecureLink: false,
+    idempotencyKey: null,
     replyClassification: null,
     reviewedById: "user-1",
     createdAt: iso(-12, 5),
@@ -590,6 +595,7 @@ export const COMMUNICATIONS: Communication[] = [
     threadRef: "thread-8",
     deliveryStatus: "delivered",
     hasSecureLink: false,
+    idempotencyKey: null,
     replyClassification: "payment_made",
     reviewedById: "user-1",
     createdAt: iso(-3, 6),
@@ -609,6 +615,7 @@ export const COMMUNICATIONS: Communication[] = [
     threadRef: "thread-6",
     deliveryStatus: "delivered",
     hasSecureLink: false,
+    idempotencyKey: null,
     replyClassification: "settlement_offer",
     reviewedById: "user-2",
     createdAt: iso(-10, 7),
@@ -1078,6 +1085,145 @@ export function insertAllocation(alloc: Omit<PaymentAllocation, "id" | "createdA
   );
   if (dup) return;
   PAYMENT_ALLOCATIONS.push({ ...alloc, id: `alloc-${PAYMENT_ALLOCATIONS.length + 1}`, createdAt: new Date().toISOString() });
+}
+
+/* ------------------------------------------------ email-delivery task -- */
+/* Durable send-intent (communications.idempotencyKey) and per-attempt
+ * telemetry (communication_deliveries), matching supabase/migrations/
+ * 0018_email_delivery.sql's semantics exactly so MemoryRepository and
+ * SupabaseRepository stay in parity. */
+
+export const COMMUNICATION_DELIVERIES: CommunicationDelivery[] = [];
+let communicationSeq = COMMUNICATIONS.length;
+let deliverySeq = 0;
+
+export function findCommunicationByIdempotencyKey(key: string) {
+  return COMMUNICATIONS.find((c) => c.idempotencyKey === key);
+}
+
+/** Matches begin_communication_send(): returns the existing row on a
+ * retry (same idempotency key) instead of creating a second one. */
+export function beginCommunicationSend(input: {
+  organisationId: string;
+  caseId: string;
+  channel: Channel;
+  idempotencyKey: string;
+  templateKey: string | null;
+  templateVersion: number | null;
+  subject: string | null;
+  body: string;
+}): { communication: Communication; isNew: boolean } {
+  const existing = findCommunicationByIdempotencyKey(input.idempotencyKey);
+  if (existing) return { communication: existing, isNew: false };
+
+  communicationSeq += 1;
+  const created: Communication = {
+    id: `comm-${communicationSeq}`,
+    caseId: input.caseId,
+    organisationId: input.organisationId,
+    channel: input.channel,
+    direction: "outbound",
+    templateKey: input.templateKey,
+    templateVersion: input.templateVersion,
+    subject: input.subject,
+    body: input.body,
+    providerMessageId: null,
+    threadRef: `thread-${input.caseId}`,
+    deliveryStatus: "queued",
+    hasSecureLink: false,
+    idempotencyKey: input.idempotencyKey,
+    replyClassification: null,
+    reviewedById: null,
+    createdAt: new Date().toISOString(),
+    deliveredAt: null,
+  };
+  COMMUNICATIONS.unshift(created);
+  return { communication: created, isNew: true };
+}
+
+export function listDeliveriesForCommunication(communicationId: string) {
+  return COMMUNICATION_DELIVERIES.filter((d) => d.communicationId === communicationId).sort(
+    (a, b) => a.attempt - b.attempt,
+  );
+}
+
+/** Matches begin_delivery_attempt(): blocks a new attempt while the latest
+ * one for this communication is still 'queued' (ambiguous), unless forced. */
+export function beginDeliveryAttempt(
+  organisationId: string,
+  communicationId: string,
+  attempt: number,
+  forceAfterAmbiguous: boolean,
+): { blocked: boolean; blockedReason: string | null; delivery: CommunicationDelivery } {
+  const existingForComm = listDeliveriesForCommunication(communicationId);
+  const latest = existingForComm[existingForComm.length - 1];
+  if (latest && latest.status === "queued" && !forceAfterAmbiguous) {
+    return {
+      blocked: true,
+      blockedReason: `A previous delivery attempt (#${latest.attempt}) was started but never completed -- its outcome is unknown, so a duplicate send cannot be ruled out automatically. An operator must confirm before retrying.`,
+      delivery: latest,
+    };
+  }
+
+  const dup = existingForComm.find((d) => d.attempt === attempt);
+  if (dup) return { blocked: false, blockedReason: null, delivery: dup };
+
+  deliverySeq += 1;
+  const created: CommunicationDelivery = {
+    id: `delivery-${deliverySeq}`,
+    organisationId,
+    communicationId,
+    attempt,
+    status: "queued",
+    adapterOutcome: null,
+    provider: null,
+    providerMessageId: null,
+    errorDetail: null,
+    occurredAt: new Date().toISOString(),
+  };
+  COMMUNICATION_DELIVERIES.push(created);
+  return { blocked: false, blockedReason: null, delivery: created };
+}
+
+/** Matches complete_delivery_attempt(): idempotent no-op once the attempt
+ * is no longer 'queued'. Case-state mutation stays the caller's job, same
+ * as the RPC. */
+export function completeDeliveryAttempt(input: {
+  deliveryId: string;
+  status: DeliveryStatus;
+  adapterOutcome: AdapterOutcome | null;
+  providerMessageId: string | null;
+  errorDetail: string | null;
+}): { delivery: CommunicationDelivery; communication: Communication } {
+  const idx = COMMUNICATION_DELIVERIES.findIndex((d) => d.id === input.deliveryId);
+  if (idx === -1) throw new Error(`completeDeliveryAttempt: delivery ${input.deliveryId} not found`);
+  const existing = COMMUNICATION_DELIVERIES[idx];
+  const comm = COMMUNICATIONS.find((c) => c.id === existing.communicationId);
+  if (!comm) throw new Error(`completeDeliveryAttempt: communication ${existing.communicationId} not found`);
+
+  if (existing.status !== "queued") {
+    return { delivery: existing, communication: comm }; // idempotent no-op
+  }
+
+  COMMUNICATION_DELIVERIES[idx] = {
+    ...existing,
+    status: input.status,
+    adapterOutcome: input.adapterOutcome,
+    provider: "gmail-smtp",
+    providerMessageId: input.providerMessageId,
+    errorDetail: input.errorDetail,
+  };
+
+  const commIdx = COMMUNICATIONS.findIndex((c) => c.id === comm.id);
+  const updatedComm: Communication = {
+    ...comm,
+    deliveryStatus: input.status,
+    providerMessageId: input.providerMessageId ?? comm.providerMessageId,
+    deliveredAt: input.status === "sent" ? new Date().toISOString() : comm.deliveredAt,
+  };
+  COMMUNICATIONS[commIdx] = updatedComm;
+
+  return { delivery: COMMUNICATION_DELIVERIES[idx], communication: updatedComm };
 }
 
 const ASSIGNEES: Record<string, string> = {
