@@ -29,7 +29,13 @@ import {
 } from "@/domain/reminder";
 import { applyGstAutomationFailed, applyGstFiled, applyGstPrepared } from "@/domain/gst";
 import { applyMsmeAutomationFailed, applyMsmeFiled } from "@/domain/msme";
-import { applyDdPrepared, applyHearingScheduled } from "@/domain/hearing";
+import {
+  applyDdPrepared,
+  applyHearingAdjourned,
+  applyHearingOutcome,
+  applyHearingScheduled,
+} from "@/domain/hearing";
+import { applyReplyClassified } from "@/domain/debtor-reply";
 import { applyOcrCorrected } from "@/domain/ocr";
 import { createDraftCase, type IntakeInvoiceInput } from "@/domain/intake";
 import { parseCsv, parseDate, parseMoney, validateImport } from "@/domain/bulk-import";
@@ -39,21 +45,30 @@ import { gstComposeSchema, type GstComposeInput, type ManualInvoiceInput } from 
 import type { MsmeStage } from "@/contract/adapters";
 import type {
   AuditEventRow,
+  CalendarEventRow,
+  CaseHearingRow,
   CommunicationRow,
   Database,
+  DdRecordRow,
+  DebtorReplyRow,
   DebtorRow,
   InvoiceRow,
   OrganisationRow,
+  PaymentAllocationRow,
   PaymentRecordRow,
   RecoveryCaseRow,
   WorkflowTaskRow,
 } from "@/lib/supabase/types";
 import type {
+  CaseHearing,
   Communication,
+  DdRecord,
   Debtor,
+  DebtorReply,
   ImportResult,
   Invoice,
   Organisation,
+  PaymentAllocation,
   PaymentRecord,
   RecoveryCase,
   WorkflowTask,
@@ -190,6 +205,71 @@ function toTask(row: WorkflowTaskRow): WorkflowTask {
     dueAt: row.due_at,
     resolvedAt: row.resolved_at,
     createdAt: row.created_at,
+  };
+}
+
+function toAllocation(row: PaymentAllocationRow): PaymentAllocation {
+  return {
+    id: row.id,
+    organisationId: row.organisation_id,
+    paymentRecordId: row.payment_record_id,
+    invoiceId: row.invoice_id,
+    amount: row.amount,
+    createdAt: row.created_at,
+  };
+}
+
+function toDdRecord(row: DdRecordRow): DdRecord {
+  return {
+    id: row.id,
+    organisationId: row.organisation_id,
+    caseId: row.case_id,
+    status: row.status,
+    amount: row.amount,
+    payee: row.payee,
+    reference: row.reference,
+    preparedAt: row.prepared_at,
+    submittedAt: row.submitted_at,
+    documentId: row.document_id,
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toHearing(row: CaseHearingRow): CaseHearing {
+  return {
+    id: row.id,
+    organisationId: row.organisation_id,
+    caseId: row.case_id,
+    calendarEventId: row.calendar_event_id,
+    forum: row.forum,
+    authority: row.authority,
+    caseReference: row.case_reference,
+    assignedStaffId: row.assigned_staff_id,
+    scheduledAt: row.scheduled_at,
+    status: row.status,
+    result: row.result,
+    rescheduledFromId: row.rescheduled_from_id,
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toReply(row: DebtorReplyRow): DebtorReply {
+  return {
+    id: row.id,
+    organisationId: row.organisation_id,
+    caseId: row.case_id,
+    communicationId: row.communication_id,
+    channel: row.channel,
+    rawBody: row.raw_body,
+    classification: row.classification,
+    classificationConfidence: row.classification_confidence,
+    reviewedById: row.reviewed_by_id,
+    reviewedAt: row.reviewed_at,
+    receivedAt: row.received_at,
   };
 }
 
@@ -414,6 +494,47 @@ export class SupabaseRepository implements Repository {
     return unwrap(res, "listTasksForCase").map(toTask);
   }
 
+  async listAllocationsForCase(caseId: string) {
+    const supabase = await this.db();
+    const payments = await this.listPaymentsForCase(caseId);
+    if (payments.length === 0) return [];
+    const res = await supabase
+      .from("payment_allocations")
+      .select("*")
+      .in(
+        "payment_record_id",
+        payments.map((p) => p.id),
+      );
+    return unwrap(res, "listAllocationsForCase").map(toAllocation);
+  }
+
+  async getDdRecord(caseId: string) {
+    const supabase = await this.db();
+    const { data, error } = await supabase.from("dd_records").select("*").eq("case_id", caseId).maybeSingle();
+    if (error) throw new Error(`SupabaseRepository.getDdRecord: ${error.message}`);
+    return data ? toDdRecord(data) : undefined;
+  }
+
+  async listHearingsForCase(caseId: string) {
+    const supabase = await this.db();
+    const res = await supabase
+      .from("case_hearings")
+      .select("*")
+      .eq("case_id", caseId)
+      .order("scheduled_at", { ascending: false });
+    return unwrap(res, "listHearingsForCase").map(toHearing);
+  }
+
+  async listDebtorRepliesForCase(caseId: string) {
+    const supabase = await this.db();
+    const res = await supabase
+      .from("debtor_replies")
+      .select("*")
+      .eq("case_id", caseId)
+      .order("received_at", { ascending: false });
+    return unwrap(res, "listDebtorRepliesForCase").map(toReply);
+  }
+
   async listAllCommunications() {
     const supabase = await this.db();
     const res = await supabase.from("communications").select("*").order("created_at", { ascending: false });
@@ -492,8 +613,11 @@ export class SupabaseRepository implements Repository {
   }
 
   async recoveryTrend(): Promise<TrendPoint[]> {
-    // TODO(api): backed by a daily rollup once payment_allocations land;
-    // an empty series is the honest "no data yet" answer against a fresh DB.
+    // payment_allocations now lands real rows (P0-5, 0012_p0_5_workflow_
+    // durability.sql) -- what's still missing is this method's own daily
+    // rollup query against them. An empty series stays the honest "no
+    // trend computed yet" answer rather than a fabricated one.
+    // TODO(api): aggregate payment_allocations by day for this trend.
     return [];
   }
 
@@ -767,6 +891,7 @@ export class SupabaseRepository implements Repository {
       p_invoice_updates: result.invoiceAllocations.map((a) => ({
         id: a.invoiceId,
         outstandingBalance: a.balanceAfter,
+        applied: a.applied,
       })),
       p_reason: result.note,
       p_expected_actor_id: actor.actorId,
@@ -1139,45 +1264,69 @@ export class SupabaseRepository implements Repository {
     return { case: toCase(updatedRow), diaryNumber, petitionPdfKey };
   }
 
-  async prepareDdTask(caseId: string, actor: MutationActor): Promise<{ case: RecoveryCase }> {
+  async prepareDdTask(
+    caseId: string,
+    input: { amount?: number | null; payee?: string | null; reference?: string | null; notes?: string | null },
+    actor: MutationActor,
+  ): Promise<{ case: RecoveryCase; dd: DdRecord }> {
     const supabase = await this.db();
     const kase = await this.getCase(caseId);
     if (!kase) throw new Error(`prepareDdTask: case ${caseId} not found`);
     const prepared = applyDdPrepared(kase);
-    // Matches MemoryRepository.prepareDdTask exactly (case update + audit
-    // only, no workflow_tasks row) -- parity with current behavior, not
-    // with this file's own pre-existing aspirational TODO comment, which
-    // diverged from MemoryRepository and is a separate product decision
-    // (see the P0-4 audit report's parity matrix).
-    const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
+    const result = await callWriteRpc<{ case: RecoveryCaseRow; dd: DdRecordRow }>(supabase, "prepare_dd", {
       p_case_id: caseId,
       p_case: prepared.updatedCase,
-      p_action: "dd.prepared",
-      p_entity: "recovery_case",
+      p_amount: input.amount ?? null,
+      p_payee: input.payee ?? null,
+      p_reference: input.reference ?? null,
+      p_notes: input.notes ?? null,
       p_reason: prepared.note,
       p_expected_actor_id: actor.actorId,
     });
-    return { case: toCase(updatedRow) };
+    return { case: toCase(result.case), dd: toDdRecord(result.dd) };
+  }
+
+  async recordDdSubmitted(
+    caseId: string,
+    input: { submittedAt?: string | null; documentId?: string | null },
+    actor: MutationActor,
+  ): Promise<DdRecord> {
+    const supabase = await this.db();
+    const row = await callWriteRpc<DdRecordRow>(supabase, "record_dd_submitted", {
+      p_case_id: caseId,
+      p_submitted_at: input.submittedAt ?? null,
+      p_document_id: input.documentId ?? null,
+      p_reason: "DD handed over / submitted",
+      p_expected_actor_id: actor.actorId,
+    });
+    return toDdRecord(row);
   }
 
   async scheduleHearing(
     caseId: string,
-    startsAtIso: string,
+    input: {
+      startsAtIso: string;
+      forum?: string | null;
+      authority?: string | null;
+      caseReference?: string | null;
+      assignedStaffId?: string | null;
+      notes?: string | null;
+    },
     actor: MutationActor,
-  ): Promise<{ case: RecoveryCase; eventId: string | null }> {
+  ): Promise<{ case: RecoveryCase; hearing: CaseHearing }> {
     const supabase = await this.db();
     const kase = await this.getCase(caseId);
     if (!kase) throw new Error(`scheduleHearing: case ${caseId} not found`);
-    const startsAt = new Date(startsAtIso);
-    if (Number.isNaN(startsAt.getTime())) throw new Error(`scheduleHearing: invalid date "${startsAtIso}"`);
+    const startsAt = new Date(input.startsAtIso);
+    if (Number.isNaN(startsAt.getTime())) throw new Error(`scheduleHearing: invalid date "${input.startsAtIso}"`);
 
-    const idempotencyKey = `hearing:${caseId}:${startsAtIso}`;
+    const idempotencyKey = `hearing:${caseId}:${input.startsAtIso}`;
     const outcome = await runAdapter(
       (key) =>
         getAdapters().calendar.upsertEvent({
           idempotencyKey: key,
           caseId,
-          title: `MSEFC hearing — case ${caseId}`,
+          title: `${input.forum ?? "MSEFC hearing"} — case ${caseId}`,
           startsAt: startsAt.toISOString(),
           kind: "hearing",
         }),
@@ -1185,19 +1334,140 @@ export class SupabaseRepository implements Repository {
     );
 
     const scheduled = applyHearingScheduled(kase, startsAt);
-    // Matches MemoryRepository.scheduleHearing exactly: no calendar_events
-    // row is persisted, only the case update + audit (the calendar event id
-    // is recorded in the audit reason). See the note on prepareDdTask above.
-    const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
-      p_case_id: caseId,
-      p_case: scheduled.updatedCase,
-      p_action: "hearing.scheduled",
-      p_entity: "recovery_case",
-      p_reason: `${scheduled.note}; calendar event ${outcome.result.data?.eventId ?? "n/a"}`,
+    const result = await callWriteRpc<{ case: RecoveryCaseRow; hearing: CaseHearingRow; calendarEvent?: CalendarEventRow }>(
+      supabase,
+      "schedule_hearing",
+      {
+        p_case_id: caseId,
+        p_case: scheduled.updatedCase,
+        p_scheduled_at: startsAt.toISOString(),
+        p_forum: input.forum ?? null,
+        p_authority: input.authority ?? null,
+        p_case_reference: input.caseReference ?? null,
+        p_assigned_staff_id: input.assignedStaffId ?? null,
+        p_notes: input.notes ?? null,
+        p_reason: `${scheduled.note}; calendar adapter event ${outcome.result.data?.eventId ?? "n/a"}`,
+        p_expected_actor_id: actor.actorId,
+      },
+    );
+
+    return { case: toCase(result.case), hearing: toHearing(result.hearing) };
+  }
+
+  async rescheduleHearing(
+    hearingId: string,
+    caseId: string,
+    input: {
+      newStartsAtIso: string;
+      forum?: string | null;
+      authority?: string | null;
+      caseReference?: string | null;
+      assignedStaffId?: string | null;
+      notes?: string | null;
+    },
+    actor: MutationActor,
+  ): Promise<{ case: RecoveryCase; hearing: CaseHearing }> {
+    const supabase = await this.db();
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`rescheduleHearing: case ${caseId} not found`);
+    const newStartsAt = new Date(input.newStartsAtIso);
+    if (Number.isNaN(newStartsAt.getTime())) {
+      throw new Error(`rescheduleHearing: invalid date "${input.newStartsAtIso}"`);
+    }
+
+    const adjourned = applyHearingAdjourned(kase);
+    const scheduled = applyHearingScheduled({ ...kase, ...adjourned.updatedCase }, newStartsAt);
+
+    const result = await callWriteRpc<{ case: RecoveryCaseRow; hearing: CaseHearingRow; calendarEvent: CalendarEventRow }>(
+      supabase,
+      "reschedule_hearing",
+      {
+        p_hearing_id: hearingId,
+        p_case_id: caseId,
+        p_case: scheduled.updatedCase,
+        p_new_scheduled_at: newStartsAt.toISOString(),
+        p_forum: input.forum ?? null,
+        p_authority: input.authority ?? null,
+        p_case_reference: input.caseReference ?? null,
+        p_assigned_staff_id: input.assignedStaffId ?? null,
+        p_notes: input.notes ?? null,
+        p_reason: `${adjourned.note}; ${scheduled.note}`,
+        p_expected_actor_id: actor.actorId,
+      },
+    );
+
+    return { case: toCase(result.case), hearing: toHearing(result.hearing) };
+  }
+
+  async recordHearingOutcome(
+    hearingId: string,
+    caseId: string,
+    input: { status: "completed" | "cancelled"; result?: string | null; recovered: boolean },
+    actor: MutationActor,
+  ): Promise<{ case: RecoveryCase; hearing: CaseHearing }> {
+    const supabase = await this.db();
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`recordHearingOutcome: case ${caseId} not found`);
+    const outcome = applyHearingOutcome(kase, input.recovered);
+
+    const result = await callWriteRpc<{ case: RecoveryCaseRow; hearing: CaseHearingRow }>(
+      supabase,
+      "record_hearing_outcome",
+      {
+        p_hearing_id: hearingId,
+        p_case_id: caseId,
+        p_case: outcome.updatedCase,
+        p_status: input.status,
+        p_result: input.result ?? null,
+        p_reason: outcome.note,
+        p_expected_actor_id: actor.actorId,
+      },
+    );
+
+    return { case: toCase(result.case), hearing: toHearing(result.hearing) };
+  }
+
+  async recordDebtorReply(
+    caseId: string,
+    input: {
+      channel: import("@/contract/enums").Channel;
+      rawBody: string;
+      communicationId?: string | null;
+      classification: import("@/contract/enums").ReplyClassification;
+    },
+    actor: MutationActor,
+  ): Promise<{ case: RecoveryCase; reply: DebtorReply }> {
+    const supabase = await this.db();
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`recordDebtorReply: case ${caseId} not found`);
+    const classified = applyReplyClassified(kase, input.classification);
+
+    const result = await callWriteRpc<{ case: RecoveryCaseRow; reply: DebtorReplyRow }>(
+      supabase,
+      "record_debtor_reply",
+      {
+        p_case_id: caseId,
+        p_case: classified.updatedCase,
+        p_channel: input.channel,
+        p_raw_body: input.rawBody,
+        p_communication_id: input.communicationId ?? null,
+        p_classification: input.classification,
+        p_reason: classified.note,
+        p_expected_actor_id: actor.actorId,
+      },
+    );
+
+    return { case: toCase(result.case), reply: toReply(result.reply) };
+  }
+
+  async resolveWorkflowTask(taskId: string, reason: string, actor: MutationActor): Promise<WorkflowTask> {
+    const supabase = await this.db();
+    const row = await callWriteRpc<WorkflowTaskRow>(supabase, "resolve_workflow_task", {
+      p_task_id: taskId,
+      p_reason: reason,
       p_expected_actor_id: actor.actorId,
     });
-
-    return { case: toCase(updatedRow), eventId: outcome.result.data?.eventId ?? null };
+    return toTask(row);
   }
 
   async correctInvoiceOcr(

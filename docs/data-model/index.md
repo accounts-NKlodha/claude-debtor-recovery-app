@@ -9,6 +9,15 @@ title: "Data Model and Import Contract"
 
 Organisation; ClientUser; StaffUser; LegalEntity; GSTRegistration; UdyamRegistration; EnterpriseUnit; EconomicActivity; MSEFC; Debtor; DebtorRating; Case; Invoice; PurchaseOrder; LedgerSnapshot; Adjustment; Contact; Advocate; Document; DocumentVersion; WorkflowTrigger; OrchestrationRun; OrchestrationStepAttempt; PrerequisiteEvaluation; Communication; CommunicationDelivery; DebtorReply; PaymentClaim; PaymentConfirmation; PromiseToPay; Settlement; EligibilityCheck; WorkflowTask; ExternalSubmission; PortalArtifact; ClaimStatement; ClaimObjection; ClaimDeterminationPoint; DemandDraft; Hearing; CalendarEvent; FeeLedger; AuditEvent; CredentialReference; Notification.
 
+**P0-5 (2026-09-14/15):** `WorkflowTask`, `DemandDraft` (as `dd_records`),
+`Hearing` (as `case_hearings`, one row per occurrence) and
+`PaymentAllocation`/`DebtorReply`'s write paths are now materialized and
+durable — see `docs/workflow-durability/index.md` for what each RPC does
+and what's still a schema-only placeholder (`EligibilityCheck`,
+`ExternalSubmission`, `PortalArtifact`, `FeeLedger`, `Document`/
+`DocumentVersion`, `Notification`, `OrchestrationRun`/
+`OrchestrationStepAttempt`).
+
 ## Minimum invoice fields
 
 Invoice number, invoice date, taxable value, tax rate, tax amount, total, balance, debtor name, debtor GSTIN, optional due date, client/legal entity, currency, source document and extraction confidence.

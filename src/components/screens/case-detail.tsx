@@ -12,8 +12,12 @@ import {
   Server,
 } from "lucide-react";
 import type {
+  CaseHearing,
   Communication,
+  DdRecord,
+  DebtorReply,
   Invoice,
+  PaymentAllocation,
   PaymentRecord,
   RecoveryCase,
   WorkflowTask,
@@ -30,6 +34,8 @@ import { SpotlightCard } from "@/components/ui/spotlight-card";
 import { SendReminderButton } from "./send-reminder-button";
 import { DdHearingActions } from "./dd-hearing-actions";
 import { OcrReviewPanel } from "./ocr-review-panel";
+import { ResolveTaskButton } from "./resolve-task-button";
+import { DebtorReplyForm } from "./debtor-reply-form";
 
 export interface CaseDetailVM {
   kase: RecoveryCase;
@@ -42,6 +48,10 @@ export interface CaseDetailVM {
   communications: Communication[];
   payments: PaymentRecord[];
   tasks: WorkflowTask[];
+  allocations: PaymentAllocation[];
+  ddRecord: DdRecord | undefined;
+  hearings: CaseHearing[];
+  debtorReplies: DebtorReply[];
 }
 
 function fmtDate(s: string | null) {
@@ -101,7 +111,7 @@ export function CaseDetail({ vm }: { vm: CaseDetailVM }) {
             </div>
           ) : null}
           {kase.status === "active" ? <SendReminderButton caseId={kase.id} /> : null}
-          <DdHearingActions caseId={kase.id} status={kase.status} />
+          <DdHearingActions caseId={kase.id} status={kase.status} ddRecord={vm.ddRecord} hearings={vm.hearings} />
         </div>
 
         {kase.status === "correction_required" && vm.invoices[0] ? (
@@ -183,6 +193,28 @@ export function CaseDetail({ vm }: { vm: CaseDetailVM }) {
           </TabsContent>
 
           <TabsContent value="communications">
+            <div className="mb-4">
+              <DebtorReplyForm caseId={kase.id} />
+            </div>
+            {vm.debtorReplies.length > 0 ? (
+              <div className="mb-4 flex flex-col gap-2">
+                <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                  Recorded debtor replies
+                </span>
+                {vm.debtorReplies.map((r) => (
+                  <Card key={r.id}>
+                    <CardContent className="p-4">
+                      <div className="mb-1 flex flex-wrap items-center gap-2">
+                        <Badge tone="primary">{r.channel}</Badge>
+                        {r.classification ? <Badge tone="neutral">{r.classification.replace(/_/g, " ")}</Badge> : null}
+                        <span className="ml-auto text-xs text-muted-foreground">{fmtDate(r.receivedAt)}</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground">{r.rawBody}</p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : null}
             {vm.communications.length === 0 ? (
               <EmptyState icon={<MessageSquare />} title="No communications yet" />
             ) : (
@@ -222,21 +254,38 @@ export function CaseDetail({ vm }: { vm: CaseDetailVM }) {
               <EmptyState icon={<Wallet />} title="No payments recorded" />
             ) : (
               <div className="flex flex-col gap-2">
-                {vm.payments.map((p) => (
-                  <Card key={p.id}>
-                    <CardContent className="flex items-center justify-between gap-3 p-4">
-                      <div>
-                        <p className="text-sm font-medium tabular-nums">{formatInr(p.amount)}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {p.kind} &middot; {p.receivedOn} &middot; {p.reference ?? "no ref"}
-                        </p>
-                      </div>
-                      <Badge tone={p.clientConfirmed ? "success" : "warning"}>
-                        {p.clientConfirmed ? "Client confirmed" : "Awaiting confirmation"}
-                      </Badge>
-                    </CardContent>
-                  </Card>
-                ))}
+                {vm.payments.map((p) => {
+                  const allocs = vm.allocations.filter((a) => a.paymentRecordId === p.id);
+                  return (
+                    <Card key={p.id}>
+                      <CardContent className="flex flex-col gap-2 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium tabular-nums">{formatInr(p.amount)}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {p.kind} &middot; {p.receivedOn} &middot; {p.reference ?? "no ref"}
+                            </p>
+                          </div>
+                          <Badge tone={p.clientConfirmed ? "success" : "warning"}>
+                            {p.clientConfirmed ? "Client confirmed" : "Awaiting confirmation"}
+                          </Badge>
+                        </div>
+                        {allocs.length > 0 ? (
+                          <div className="flex flex-col gap-1 border-t border-border pt-2">
+                            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                              Allocated to invoices
+                            </span>
+                            {allocs.map((a) => (
+                              <span key={a.id} className="text-xs tabular-nums text-muted-foreground">
+                                Invoice {a.invoiceId.slice(0, 8)} — {formatInr(a.amount)}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
             )}
           </TabsContent>
@@ -266,6 +315,7 @@ export function CaseDetail({ vm }: { vm: CaseDetailVM }) {
                       <div className="flex items-center gap-2">
                         {t.urgent ? <Badge tone="danger">Urgent</Badge> : null}
                         <WaitingOnPill value={t.waitingOn} />
+                        <ResolveTaskButton taskId={t.id} caseId={kase.id} />
                       </div>
                     </CardContent>
                   </Card>

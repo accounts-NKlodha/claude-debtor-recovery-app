@@ -34,15 +34,20 @@
  */
 
 import type {
+  CaseHearing,
   Communication,
+  DdRecord,
   Debtor,
+  DebtorReply,
   ImportResult,
   Invoice,
   Organisation,
+  PaymentAllocation,
   PaymentRecord,
   RecoveryCase,
   WorkflowTask,
 } from "@/contract/types";
+import type { HearingStatus, ReplyClassification, Channel } from "@/contract/enums";
 import type { MutationActor } from "@/lib/auth/types";
 import type { CaseRow, ClientOverview, QueueItem } from "@/lib/mock-data";
 
@@ -108,6 +113,14 @@ export interface Repository {
   listCommunicationsForCase(caseId: string): Promise<Communication[]>;
   listPaymentsForCase(caseId: string): Promise<PaymentRecord[]>;
   listTasksForCase(caseId: string): Promise<WorkflowTask[]>;
+  /** Per-invoice breakdown of every confirmed payment against this case (P0-5 §6). */
+  listAllocationsForCase(caseId: string): Promise<PaymentAllocation[]>;
+  /** The case's durable DD record, if DD preparation has ever started (P0-5 §4). */
+  getDdRecord(caseId: string): Promise<DdRecord | undefined>;
+  /** Every hearing occurrence for the case, most recent first (P0-5 §5). */
+  listHearingsForCase(caseId: string): Promise<CaseHearing[]>;
+  /** Inbound debtor replies recorded for this case (P0-5 §7). */
+  listDebtorRepliesForCase(caseId: string): Promise<DebtorReply[]>;
 
   // -- cross-case lists (already client/org-filtered by the caller's session) --
   listAllCommunications(): Promise<Communication[]>;
@@ -219,16 +232,83 @@ export interface Repository {
   ): Promise<{ case: RecoveryCase; diaryNumber: string | null; petitionPdfKey: string | null }>;
 
   /**
-   * DD / hearing tracking (PRD §12). DD preparation and the physical demand
-   * draft remain human/manual; scheduling a hearing creates a calendar event
-   * through the calendar adapter.
+   * DD / hearing tracking (PRD §12, P0-5 §4/§5). DD preparation and the
+   * physical demand draft remain human/manual -- the platform tracks the
+   * task, amount/payee/reference and submission status durably. Amount/
+   * payee/reference/notes may be supplied incrementally (a later call with
+   * new values updates the existing record); rejected once the DD has been
+   * submitted.
    */
-  prepareDdTask(caseId: string, actor: MutationActor): Promise<{ case: RecoveryCase }>;
+  prepareDdTask(
+    caseId: string,
+    input: { amount?: number | null; payee?: string | null; reference?: string | null; notes?: string | null },
+    actor: MutationActor,
+  ): Promise<{ case: RecoveryCase; dd: DdRecord }>;
+  /** Marks the case's DD handed over/submitted; idempotent on retry. */
+  recordDdSubmitted(
+    caseId: string,
+    input: { submittedAt?: string | null; documentId?: string | null },
+    actor: MutationActor,
+  ): Promise<DdRecord>;
+
+  /**
+   * Schedules the first hearing for a case, persisting both a `case_hearings`
+   * row and a `calendar_events` row. Rejects a second call with a different
+   * date while one is already scheduled -- use `rescheduleHearing`.
+   */
   scheduleHearing(
     caseId: string,
-    startsAtIso: string,
+    input: {
+      startsAtIso: string;
+      forum?: string | null;
+      authority?: string | null;
+      caseReference?: string | null;
+      assignedStaffId?: string | null;
+      notes?: string | null;
+    },
     actor: MutationActor,
-  ): Promise<{ case: RecoveryCase; eventId: string | null }>;
+  ): Promise<{ case: RecoveryCase; hearing: CaseHearing }>;
+  /** Adjourns the current hearing and schedules a replacement occurrence (full history preserved). */
+  rescheduleHearing(
+    hearingId: string,
+    caseId: string,
+    input: {
+      newStartsAtIso: string;
+      forum?: string | null;
+      authority?: string | null;
+      caseReference?: string | null;
+      assignedStaffId?: string | null;
+      notes?: string | null;
+    },
+    actor: MutationActor,
+  ): Promise<{ case: RecoveryCase; hearing: CaseHearing }>;
+  /** Records a hearing's result ('completed' | 'cancelled' only); idempotent once recorded. */
+  recordHearingOutcome(
+    hearingId: string,
+    caseId: string,
+    input: { status: Extract<HearingStatus, "completed" | "cancelled">; result?: string | null; recovered: boolean },
+    actor: MutationActor,
+  ): Promise<{ case: RecoveryCase; hearing: CaseHearing }>;
+
+  /**
+   * Records + classifies an inbound debtor reply (P0-5 §7). No AI
+   * classification in this build -- `classification` is always staff-entered.
+   * Drives the same `REPLY_CLASSIFIED` workflow transition as any other
+   * reply-handling path, raising the matching follow-up task.
+   */
+  recordDebtorReply(
+    caseId: string,
+    input: {
+      channel: Channel;
+      rawBody: string;
+      communicationId?: string | null;
+      classification: ReplyClassification;
+    },
+    actor: MutationActor,
+  ): Promise<{ case: RecoveryCase; reply: DebtorReply }>;
+
+  /** Marks a workflow task done ("workflow task completion", P0-5 §9); idempotent on retry. */
+  resolveWorkflowTask(taskId: string, reason: string, actor: MutationActor): Promise<WorkflowTask>;
 
   /**
    * Staff reviews and corrects a low-confidence OCR extraction (PRD §7,

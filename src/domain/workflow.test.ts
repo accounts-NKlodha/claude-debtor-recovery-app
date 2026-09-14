@@ -98,6 +98,26 @@ describe("workflow state machine", () => {
     expect(notEligible.next.eligibilityRoute).toBe("non_msme_manual");
   });
 
+  it("a scheduled hearing can be adjourned, then rescheduled back to hearing_scheduled", () => {
+    const s: WorkflowState = { ...initialState(1), status: "hearing_scheduled", waitingOn: "portal" };
+    const adjourned = advance(s, { type: "HEARING_ADJOURNED" });
+    expect(adjourned.next.status).toBe("adjourned");
+    expect(adjourned.next.waitingOn).toBe("portal");
+    expect(adjourned.effect).toBeNull(); // hearing_followup task stays the operative one
+
+    const rescheduled = advance(adjourned.next, { type: "HEARING_SCHEDULED" });
+    expect(rescheduled.next.status).toBe("hearing_scheduled");
+  });
+
+  it("confirmed full payment / dispute resolution also apply from adjourned", () => {
+    const adjourned: WorkflowState = { ...initialState(50_000_00), status: "adjourned", principalOutstanding: 50_000_00 };
+    const paid = advance(adjourned, { type: "PAYMENT_CONFIRMED", fullSettlement: true });
+    expect(paid.next.status).toBe("recovered");
+
+    const resolved = advance(adjourned, { type: "DISPUTE_RESOLVED", recovered: false });
+    expect(resolved.next.status).toBe("closed");
+  });
+
   it("dispute reply opens a staff resolution task", () => {
     const s: WorkflowState = { ...initialState(1), status: "initial_communication_sent" };
     const t = advance(s, { type: "REPLY_CLASSIFIED", classification: "dispute" });

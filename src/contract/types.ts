@@ -9,8 +9,10 @@ import type {
   CaseStatus,
   Channel,
   CommunicationDirection,
+  DdStatus,
   DeliveryStatus,
   EligibilityRoute,
+  HearingStatus,
   PaymentKind,
   ReplyClassification,
   TaskType,
@@ -142,6 +144,63 @@ export interface WorkflowTask {
   dueAt: Timestamp | null;
   resolvedAt: Timestamp | null;
   createdAt: Timestamp;
+}
+
+export interface PaymentAllocation {
+  id: UUID;
+  organisationId: UUID;
+  paymentRecordId: UUID;
+  invoiceId: UUID;
+  amount: Paise;
+  createdAt: Timestamp;
+}
+
+export interface DdRecord {
+  id: UUID;
+  organisationId: UUID;
+  caseId: UUID;
+  status: DdStatus;
+  amount: Paise | null;
+  payee: string | null;
+  reference: string | null;
+  preparedAt: Timestamp | null;
+  submittedAt: Timestamp | null;
+  documentId: UUID | null;
+  notes: string | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface CaseHearing {
+  id: UUID;
+  organisationId: UUID;
+  caseId: UUID;
+  calendarEventId: UUID | null;
+  forum: string | null;
+  authority: string | null;
+  caseReference: string | null;
+  assignedStaffId: UUID | null;
+  scheduledAt: Timestamp;
+  status: HearingStatus;
+  result: string | null;
+  rescheduledFromId: UUID | null;
+  notes: string | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface DebtorReply {
+  id: UUID;
+  organisationId: UUID;
+  caseId: UUID;
+  communicationId: UUID | null;
+  channel: Channel;
+  rawBody: string;
+  classification: ReplyClassification | null;
+  classificationConfidence: number | null;
+  reviewedById: UUID | null;
+  reviewedAt: Timestamp | null;
+  receivedAt: Timestamp;
 }
 
 export interface AuditEvent {

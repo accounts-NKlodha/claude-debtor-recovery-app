@@ -18,7 +18,7 @@ title: "Acceptance and Pilot Plan"
 8. Prepare GST filing with field-length validation; staff completes CAPTCHA and final Send; capture reference/screenshots/PDF.
 9. Simulate portal drift and verify fail-closed alert/urgent task behavior.
 10. Prepare all seven MSME ODR stages, save/resume each stage, validate field limits and produce a preview snapshot.
-11. Create DD task, upload DD/tracking evidence and generate hearing calendar reminder.
+11. Create DD task, upload DD/tracking evidence and generate hearing calendar reminder. **P0-5 status:** DD task creation/tracking (amount/payee/reference/status) and hearing calendar reminders (`case_hearings` + `calendar_events`, reschedule/adjournment, outcome recording) are live-verified durable (`docs/workflow-durability/index.md`). "Upload DD/tracking evidence" is not implemented — the schema has a `document_id` slot on `dd_records` for it, but the whole evidence-upload path is out of scope for this phase.
 12. Confirm client cannot access another client’s records, documents, rating or AI context.
 13. Restore backup and reconstruct one complete case audit trail.
 14. Let a high-confidence synthetic intake advance through every approved deterministic preparation step, then stop visibly at client certification, staff validation, 60-day or legal-policy gates without waiving them.

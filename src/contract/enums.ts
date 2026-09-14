@@ -98,6 +98,12 @@ export const ADAPTER_OUTCOME = [
 ] as const;
 export type AdapterOutcome = (typeof ADAPTER_OUTCOME)[number];
 
+export const DD_STATUS = ["preparation_pending", "prepared", "submitted"] as const;
+export type DdStatus = (typeof DD_STATUS)[number];
+
+export const HEARING_STATUS = ["scheduled", "adjourned", "completed", "cancelled"] as const;
+export type HearingStatus = (typeof HEARING_STATUS)[number];
+
 export const TASK_TYPE = [
   "ocr_low_confidence",
   "missing_invoice_field",

@@ -70,6 +70,18 @@ Received; Under validation; Correction required; Active; Initial communication s
 - Failure of both message channels pauses escalation and alerts staff/client for corrected contact details.
 - Government action fails closed on changed UI, missing expected fields or missing receipt.
 
+## DD, hearing and adjournment (P0-5)
+
+The `Adjourned` status listed above is now reachable: a scheduled hearing
+that doesn't conclude moves to `Adjourned` (`waiting_on: portal`, blocker
+"Hearing adjourned — awaiting next date"), and a subsequent
+`HEARING_SCHEDULED` event from `Adjourned` returns the case to `Hearing
+scheduled` with the new date. Each hearing occurrence (not each case) is
+its own durable record, so a reschedule preserves full history rather than
+overwriting the prior date. See `docs/workflow-durability/index.md` for the
+full model, including exactly which follow-up tasks get raised/resolved at
+each step and the retry/idempotency guarantees.
+
 ## MSME ODR stages observed in video
 
 Claimant/Seller Details → Respondent/Buyer Details → Advocate Details (optional) → Statement of Claim → Documents → Checklist → Preview/Submit confirmation. Each stage should support save/resume and the final submitted snapshot should be immutable.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyDdPrepared, applyHearingScheduled } from "./hearing";
+import { applyDdPrepared, applyHearingAdjourned, applyHearingOutcome, applyHearingScheduled } from "./hearing";
 import type { RecoveryCase } from "@/contract/types";
 
 const filedCase: RecoveryCase = {
@@ -45,5 +45,33 @@ describe("DD / hearing workflow bridge", () => {
     const { updatedCase } = applyHearingScheduled(ddCase, startsAt);
     expect(updatedCase.status).toBe("hearing_scheduled");
     expect(updatedCase.waitingOn).toBe("portal");
+  });
+
+  it("adjourns a scheduled hearing, then accepts a reschedule back to hearing_scheduled", () => {
+    const scheduledCase = applyHearingScheduled(filedCase, new Date("2026-10-01T05:00:00.000Z")).updatedCase;
+    const { updatedCase: adjourned } = applyHearingAdjourned(scheduledCase);
+    expect(adjourned.status).toBe("adjourned");
+    expect(adjourned.blocker).toMatch(/adjourned/i);
+
+    const rescheduled = applyHearingScheduled(adjourned, new Date("2026-11-01T05:00:00.000Z"));
+    expect(rescheduled.updatedCase.status).toBe("hearing_scheduled");
+    expect(rescheduled.updatedCase.nextScheduledAt).toBe("2026-11-01T05:00:00.000Z");
+  });
+
+  it("records a recovered hearing outcome as 'recovered', and an against outcome as 'closed'", () => {
+    const scheduledCase = applyHearingScheduled(filedCase, new Date("2026-10-01T05:00:00.000Z")).updatedCase;
+
+    const won = applyHearingOutcome(scheduledCase, true);
+    expect(won.updatedCase.status).toBe("recovered");
+
+    const lost = applyHearingOutcome(scheduledCase, false);
+    expect(lost.updatedCase.status).toBe("closed");
+  });
+
+  it("also records an outcome directly from adjourned (hearing never resumed)", () => {
+    const scheduledCase = applyHearingScheduled(filedCase, new Date("2026-10-01T05:00:00.000Z")).updatedCase;
+    const adjourned = applyHearingAdjourned(scheduledCase).updatedCase;
+    const { updatedCase } = applyHearingOutcome(adjourned, false);
+    expect(updatedCase.status).toBe("closed");
   });
 });

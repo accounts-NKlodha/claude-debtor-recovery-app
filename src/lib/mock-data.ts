@@ -5,11 +5,15 @@
  */
 
 import type {
+  CaseHearing,
   Communication,
+  DdRecord,
   Debtor,
+  DebtorReply,
   ImportResult,
   Invoice,
   Organisation,
+  PaymentAllocation,
   PaymentRecord,
   RecoveryCase,
   WorkflowTask,
@@ -811,6 +815,269 @@ export function listTasksForCase(caseId: string) {
 }
 export function openTasks() {
   return TASKS.filter((t) => !t.resolvedAt);
+}
+
+/* ---------------------------------------------------- workflow durability -- */
+/* P0-5: payment allocations, DD records, hearings, debtor replies -- start
+ * empty (no seeded demo state for these; they materialize only from real
+ * mutations, same as production). */
+
+export const PAYMENT_ALLOCATIONS: PaymentAllocation[] = [];
+export const DD_RECORDS: DdRecord[] = [];
+export const CASE_HEARINGS: CaseHearing[] = [];
+export const DEBTOR_REPLIES: DebtorReply[] = [];
+
+let taskSeq = TASKS.length;
+export function insertTask(task: Omit<WorkflowTask, "id" | "createdAt" | "resolvedAt">) {
+  taskSeq += 1;
+  const created: WorkflowTask = { ...task, id: `task-${taskSeq}`, resolvedAt: null, createdAt: new Date().toISOString() };
+  TASKS.push(created);
+  return created;
+}
+
+/** Idempotent: raising a task while one of the same (caseId, type) is
+ * already open returns the existing row unchanged, matching
+ * raise_workflow_task() in supabase/migrations/0012_p0_5_workflow_durability.sql. */
+export function raiseTaskIfNotOpen(task: Omit<WorkflowTask, "id" | "createdAt" | "resolvedAt">) {
+  const existing = TASKS.find((t) => t.caseId === task.caseId && t.type === task.type && !t.resolvedAt);
+  if (existing) return existing;
+  return insertTask(task);
+}
+
+export function resolveTask(id: string) {
+  const idx = TASKS.findIndex((t) => t.id === id);
+  if (idx === -1) throw new Error(`resolveTask: task ${id} not found`);
+  if (TASKS[idx].resolvedAt) return TASKS[idx]; // idempotent no-op, see resolve_workflow_task()
+  TASKS[idx] = { ...TASKS[idx], resolvedAt: new Date().toISOString() };
+  return TASKS[idx];
+}
+
+/** Auto-resolve every open task for a case reaching a terminal status,
+ * mirroring close_case_tasks_if_terminal() in the same migration. */
+export function closeCaseTasksIfTerminal(caseId: string, status: CaseStatus) {
+  if (!["recovered", "closed", "withdrawn", "archived"].includes(status)) return;
+  for (const t of TASKS) {
+    if (t.caseId === caseId && !t.resolvedAt) t.resolvedAt = new Date().toISOString();
+  }
+}
+
+export function getDdRecord(caseId: string) {
+  return DD_RECORDS.find((d) => d.caseId === caseId);
+}
+
+/** Upsert semantics matching prepare_dd(): create on first call, merge
+ * non-null fields on subsequent calls, reject once submitted. */
+export function upsertDdRecord(
+  caseId: string,
+  organisationId: string,
+  input: { amount?: number | null; payee?: string | null; reference?: string | null; notes?: string | null },
+): DdRecord {
+  const existing = getDdRecord(caseId);
+  if (existing?.status === "submitted") {
+    throw new Error(`prepare_dd: DD for case ${caseId} is already submitted -- cannot re-prepare`);
+  }
+  const now = new Date().toISOString();
+  if (existing) {
+    const idx = DD_RECORDS.indexOf(existing);
+    DD_RECORDS[idx] = {
+      ...existing,
+      amount: input.amount ?? existing.amount,
+      payee: input.payee ?? existing.payee,
+      reference: input.reference ?? existing.reference,
+      notes: input.notes ?? existing.notes,
+      status: existing.status === "preparation_pending" ? "prepared" : existing.status,
+      preparedAt: existing.preparedAt ?? now,
+      updatedAt: now,
+    };
+    return DD_RECORDS[idx];
+  }
+  const created: DdRecord = {
+    id: `dd-${DD_RECORDS.length + 1}`,
+    organisationId,
+    caseId,
+    status: "prepared",
+    amount: input.amount ?? null,
+    payee: input.payee ?? null,
+    reference: input.reference ?? null,
+    preparedAt: now,
+    submittedAt: null,
+    documentId: null,
+    notes: input.notes ?? null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  DD_RECORDS.push(created);
+  return created;
+}
+
+export function markDdSubmitted(
+  caseId: string,
+  input: { submittedAt?: string | null; documentId?: string | null },
+): DdRecord {
+  const existing = getDdRecord(caseId);
+  if (!existing) throw new Error(`record_dd_submitted: no DD prepared for case ${caseId}`);
+  if (existing.status === "submitted") return existing; // idempotent no-op
+  const idx = DD_RECORDS.indexOf(existing);
+  DD_RECORDS[idx] = {
+    ...existing,
+    status: "submitted",
+    submittedAt: input.submittedAt ?? new Date().toISOString(),
+    documentId: input.documentId ?? existing.documentId,
+    updatedAt: new Date().toISOString(),
+  };
+  return DD_RECORDS[idx];
+}
+
+export function listHearingsForCase(caseId: string) {
+  return CASE_HEARINGS.filter((h) => h.caseId === caseId).sort((a, b) => b.scheduledAt.localeCompare(a.scheduledAt));
+}
+
+function openHearing(caseId: string) {
+  return CASE_HEARINGS.find((h) => h.caseId === caseId && h.status === "scheduled");
+}
+
+/** Matches schedule_hearing(): idempotent on an exact-date repeat, rejects a
+ * different date while one is already open. */
+export function insertHearing(
+  organisationId: string,
+  caseId: string,
+  input: {
+    scheduledAt: string;
+    forum?: string | null;
+    authority?: string | null;
+    caseReference?: string | null;
+    assignedStaffId?: string | null;
+    notes?: string | null;
+  },
+): CaseHearing {
+  const existing = openHearing(caseId);
+  if (existing) {
+    if (existing.scheduledAt === input.scheduledAt) return existing;
+    throw new Error(`schedule_hearing: a hearing is already scheduled for case ${caseId} -- use reschedule instead`);
+  }
+  const now = new Date().toISOString();
+  const created: CaseHearing = {
+    id: `hearing-${CASE_HEARINGS.length + 1}`,
+    organisationId,
+    caseId,
+    calendarEventId: null,
+    forum: input.forum ?? null,
+    authority: input.authority ?? null,
+    caseReference: input.caseReference ?? null,
+    assignedStaffId: input.assignedStaffId ?? null,
+    scheduledAt: input.scheduledAt,
+    status: "scheduled",
+    result: null,
+    rescheduledFromId: null,
+    notes: input.notes ?? null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  CASE_HEARINGS.push(created);
+  return created;
+}
+
+/** Matches reschedule_hearing(): adjourns the current occurrence, inserts a new one. */
+export function rescheduleHearingRecord(
+  hearingId: string,
+  input: {
+    newScheduledAt: string;
+    forum?: string | null;
+    authority?: string | null;
+    caseReference?: string | null;
+    assignedStaffId?: string | null;
+    notes?: string | null;
+  },
+): CaseHearing {
+  const old = CASE_HEARINGS.find((h) => h.id === hearingId);
+  if (!old) throw new Error(`reschedule_hearing: hearing ${hearingId} not found`);
+  if (old.status !== "scheduled") {
+    throw new Error(`reschedule_hearing: hearing ${hearingId} is not currently scheduled (status ${old.status})`);
+  }
+  const now = new Date().toISOString();
+  const idx = CASE_HEARINGS.indexOf(old);
+  CASE_HEARINGS[idx] = { ...old, status: "adjourned", updatedAt: now };
+  const created: CaseHearing = {
+    id: `hearing-${CASE_HEARINGS.length + 1}`,
+    organisationId: old.organisationId,
+    caseId: old.caseId,
+    calendarEventId: null,
+    forum: input.forum ?? old.forum,
+    authority: input.authority ?? old.authority,
+    caseReference: input.caseReference ?? old.caseReference,
+    assignedStaffId: input.assignedStaffId ?? old.assignedStaffId,
+    scheduledAt: input.newScheduledAt,
+    status: "scheduled",
+    result: null,
+    rescheduledFromId: hearingId,
+    notes: input.notes ?? null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  CASE_HEARINGS.push(created);
+  return created;
+}
+
+/** Matches record_hearing_outcome(): idempotent once terminal. */
+export function markHearingOutcome(
+  hearingId: string,
+  status: "completed" | "cancelled",
+  result: string | null,
+): CaseHearing {
+  const existing = CASE_HEARINGS.find((h) => h.id === hearingId);
+  if (!existing) throw new Error(`record_hearing_outcome: hearing ${hearingId} not found`);
+  if (existing.status === "completed" || existing.status === "cancelled") return existing;
+  const idx = CASE_HEARINGS.indexOf(existing);
+  CASE_HEARINGS[idx] = { ...existing, status, result, updatedAt: new Date().toISOString() };
+  return CASE_HEARINGS[idx];
+}
+
+export function listDebtorRepliesForCase(caseId: string) {
+  return DEBTOR_REPLIES.filter((r) => r.caseId === caseId).sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+}
+
+export function insertDebtorReply(
+  organisationId: string,
+  caseId: string,
+  input: {
+    channel: DebtorReply["channel"];
+    rawBody: string;
+    communicationId?: string | null;
+    classification: NonNullable<DebtorReply["classification"]>;
+  },
+  reviewedById: string,
+): DebtorReply {
+  const now = new Date().toISOString();
+  const created: DebtorReply = {
+    id: `reply-${DEBTOR_REPLIES.length + 1}`,
+    organisationId,
+    caseId,
+    communicationId: input.communicationId ?? null,
+    channel: input.channel,
+    rawBody: input.rawBody,
+    classification: input.classification,
+    classificationConfidence: null,
+    reviewedById,
+    reviewedAt: now,
+    receivedAt: now,
+  };
+  DEBTOR_REPLIES.push(created);
+  return created;
+}
+
+export function listAllocationsForCase(caseId: string) {
+  const paymentIds = new Set(PAYMENTS.filter((p) => p.caseId === caseId).map((p) => p.id));
+  return PAYMENT_ALLOCATIONS.filter((a) => paymentIds.has(a.paymentRecordId));
+}
+
+/** Matches the `on conflict (payment_record_id, invoice_id) do nothing`
+ * guard in apply_payment_confirmation(). */
+export function insertAllocation(alloc: Omit<PaymentAllocation, "id" | "createdAt">) {
+  const dup = PAYMENT_ALLOCATIONS.some(
+    (a) => a.paymentRecordId === alloc.paymentRecordId && a.invoiceId === alloc.invoiceId,
+  );
+  if (dup) return;
+  PAYMENT_ALLOCATIONS.push({ ...alloc, id: `alloc-${PAYMENT_ALLOCATIONS.length + 1}`, createdAt: new Date().toISOString() });
 }
 
 const ASSIGNEES: Record<string, string> = {

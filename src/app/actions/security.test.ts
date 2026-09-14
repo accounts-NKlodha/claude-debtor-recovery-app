@@ -241,6 +241,59 @@ describe("hearing.ts / ocr.ts / manual-invoice.ts / bulk-import.ts: authenticate
     await expect(scheduleHearingAction(caseId, new Date().toISOString())).rejects.toThrow(UnauthenticatedError);
   });
 
+  it("recordDdSubmittedAction, rescheduleHearingAction and recordHearingOutcomeAction all reject with no session", async () => {
+    authorizeStaffMutation.mockRejectedValue(new UnauthenticatedError());
+    const { recordDdSubmittedAction, rescheduleHearingAction, recordHearingOutcomeAction } = await import("./hearing");
+    const caseId = mock.CASES[0].id;
+
+    await expect(recordDdSubmittedAction(caseId)).rejects.toThrow(UnauthenticatedError);
+    await expect(
+      rescheduleHearingAction("hearing-nope", caseId, new Date().toISOString()),
+    ).rejects.toThrow(UnauthenticatedError);
+    await expect(
+      recordHearingOutcomeAction("hearing-nope", caseId, "completed", true),
+    ).rejects.toThrow(UnauthenticatedError);
+  });
+
+  it("recordDebtorReplyAction rejects with no session and never records the reply", async () => {
+    authorizeStaffMutation.mockRejectedValue(new UnauthenticatedError());
+    const { recordDebtorReplyAction } = await import("./debtor-replies");
+    const caseId = mock.CASES[0].id;
+    const before = mock.DEBTOR_REPLIES.length;
+
+    await expect(
+      recordDebtorReplyAction(caseId, { channel: "whatsapp", rawBody: "forged reply", classification: "payment_made" }),
+    ).rejects.toThrow(UnauthenticatedError);
+    expect(mock.DEBTOR_REPLIES.length).toBe(before);
+  });
+
+  it("resolveWorkflowTaskAction rejects with no session and never resolves the task", async () => {
+    authorizeStaffMutation.mockRejectedValue(new UnauthenticatedError());
+    const { resolveWorkflowTaskAction } = await import("./tasks");
+    const task = mock.raiseTaskIfNotOpen({
+      caseId: null, organisationId: mock.ORGANISATIONS[0].id, type: "policy_gate",
+      title: "security-test task", waitingOn: "staff", assigneeId: null, urgent: false, dueAt: null,
+    });
+
+    await expect(resolveWorkflowTaskAction(task.id, "forged resolution")).rejects.toThrow(UnauthenticatedError);
+    expect(mock.TASKS.find((t) => t.id === task.id)?.resolvedAt).toBeNull();
+  });
+
+  it("recordDebtorReplyAction attributes the audit entry to the real session actor, not any forged input field", async () => {
+    authorizeStaffMutation.mockResolvedValue(STAFF_B);
+    const { recordDebtorReplyAction } = await import("./debtor-replies");
+    const kase = mock.CASES.find((c) => c.status === "initial_communication_sent")!;
+
+    const { reply } = await recordDebtorReplyAction(kase.id, {
+      channel: "email",
+      rawBody: "attribution test",
+      classification: "unclear",
+    });
+    const audit = (await getRepo().listAuditLog(5)).find((a) => a.entityId === kase.id && a.action === "debtor_reply.recorded");
+    expect(audit?.actorId).toBe(STAFF_B.actorId);
+    expect(reply.reviewedById).toBe(STAFF_B.actorId);
+  });
+
   it("correctInvoiceOcrAction rejects with no session and never touches the invoice", async () => {
     authorizeStaffMutation.mockRejectedValue(new UnauthenticatedError());
     const { correctInvoiceOcrAction } = await import("./ocr");

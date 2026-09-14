@@ -51,6 +51,7 @@ export type WorkflowEvent =
   | { type: "MSME_ODR_FILED" }
   | { type: "DD_PREPARED" }
   | { type: "HEARING_SCHEDULED" }
+  | { type: "HEARING_ADJOURNED" }
   | { type: "PAYMENT_CONFIRMED"; fullSettlement: boolean }
   | { type: "DISPUTE_RESOLVED"; recovered: boolean }
   | { type: "WITHDRAWN"; reason: string }
@@ -394,6 +395,47 @@ export function advance(state: WorkflowState, event: WorkflowEvent): Transition 
       break;
 
     case "hearing_scheduled":
+      if (event.type === "DISPUTE_RESOLVED") {
+        return {
+          next: set(state, {
+            status: event.recovered ? "recovered" : "closed",
+            waitingOn: "system",
+            blocker: null,
+            nextAction: event.recovered ? "Close and raise fee" : "Close case",
+          }),
+          note: event.recovered ? "Order in favour — recovered" : "Case closed",
+          effect: event.recovered ? { kind: "close_recovered" } : null,
+        };
+      }
+      if (event.type === "HEARING_ADJOURNED") {
+        return {
+          next: set(state, {
+            status: "adjourned",
+            waitingOn: "portal",
+            blocker: "Hearing adjourned — awaiting next date",
+            nextAction: "Track next hearing date",
+          }),
+          note: "Hearing adjourned",
+          // hearing_followup stays the operative task; nothing new to raise.
+          effect: null,
+        };
+      }
+      if (event.type === "PAYMENT_CONFIRMED") return partialPayment(state);
+      break;
+
+    case "adjourned":
+      if (event.type === "HEARING_SCHEDULED") {
+        return {
+          next: set(state, {
+            status: "hearing_scheduled",
+            waitingOn: "portal",
+            blocker: "Awaiting hearing",
+            nextAction: "Attend hearing; track order",
+          }),
+          note: "Hearing rescheduled",
+          effect: null,
+        };
+      }
       if (event.type === "DISPUTE_RESOLVED") {
         return {
           next: set(state, {

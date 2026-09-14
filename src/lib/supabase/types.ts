@@ -13,8 +13,10 @@ import type {
   CaseStatus,
   Channel,
   CommunicationDirection,
+  DdStatus,
   DeliveryStatus,
   EligibilityRoute,
+  HearingStatus,
   PaymentKind,
   ReplyClassification,
   TaskType,
@@ -183,6 +185,79 @@ export interface SystemSettingsRow {
   updated_by: Nullable<string>;
 }
 
+export interface PaymentAllocationRow {
+  id: string;
+  organisation_id: string;
+  payment_record_id: string;
+  invoice_id: string;
+  amount: number; // paise
+  created_at: string;
+}
+
+export interface DdRecordRow {
+  id: string;
+  organisation_id: string;
+  case_id: string;
+  status: DdStatus;
+  amount: Nullable<number>; // paise
+  payee: Nullable<string>;
+  reference: Nullable<string>;
+  prepared_at: Nullable<string>;
+  submitted_at: Nullable<string>;
+  document_id: Nullable<string>;
+  notes: Nullable<string>;
+  created_by: Nullable<string>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CaseHearingRow {
+  id: string;
+  organisation_id: string;
+  case_id: string;
+  calendar_event_id: Nullable<string>;
+  forum: Nullable<string>;
+  authority: Nullable<string>;
+  case_reference: Nullable<string>;
+  assigned_staff_id: Nullable<string>;
+  scheduled_at: string;
+  status: HearingStatus;
+  result: Nullable<string>;
+  rescheduled_from_id: Nullable<string>;
+  notes: Nullable<string>;
+  created_by: Nullable<string>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CalendarEventRow {
+  id: string;
+  organisation_id: string;
+  case_id: Nullable<string>;
+  kind: string;
+  title: string;
+  starts_at: string;
+  ends_at: Nullable<string>;
+  location: Nullable<string>;
+  notes: Nullable<string>;
+  created_by: Nullable<string>;
+  created_at: string;
+}
+
+export interface DebtorReplyRow {
+  id: string;
+  organisation_id: string;
+  case_id: string;
+  communication_id: Nullable<string>;
+  channel: Channel;
+  raw_body: string;
+  classification: Nullable<ReplyClassification>;
+  classification_confidence: Nullable<number>;
+  reviewed_by_id: Nullable<string>;
+  reviewed_at: Nullable<string>;
+  received_at: string;
+}
+
 interface TableShape<Row, InsertOptional extends keyof Row> {
   Row: Row;
   Insert: WithDefaults<Row, InsertOptional>;
@@ -235,6 +310,11 @@ export interface Database {
       >;
       audit_events: TableShape<AuditEventRow, "id" | "created_at">;
       system_settings: TableShape<SystemSettingsRow, "updated_at" | "updated_by">;
+      payment_allocations: TableShape<PaymentAllocationRow, "id" | "created_at">;
+      dd_records: TableShape<DdRecordRow, "id" | "status" | "created_at" | "updated_at">;
+      case_hearings: TableShape<CaseHearingRow, "id" | "status" | "created_at" | "updated_at">;
+      calendar_events: TableShape<CalendarEventRow, "id" | "created_at">;
+      debtor_replies: TableShape<DebtorReplyRow, "id" | "received_at">;
     };
     Views: Record<string, never>;
     Functions: {
@@ -332,6 +412,92 @@ export interface Database {
         };
         Returns: OrganisationRow;
       };
+      /** Internal-only in Postgres (no grant to `authenticated`) -- not
+       * called directly from the client; listed here only so its shape is
+       * documented alongside the RPCs that invoke it via `perform`. */
+      resolve_workflow_task: {
+        Args: { p_task_id: string; p_reason: string | null; p_expected_actor_id?: string | null };
+        Returns: WorkflowTaskRow;
+      };
+      prepare_dd: {
+        Args: {
+          p_case_id: string;
+          p_case: Record<string, unknown>;
+          p_amount: number | null;
+          p_payee: string | null;
+          p_reference: string | null;
+          p_notes: string | null;
+          p_reason: string | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: { case: RecoveryCaseRow; dd: DdRecordRow };
+      };
+      record_dd_submitted: {
+        Args: {
+          p_case_id: string;
+          p_submitted_at: string | null;
+          p_document_id: string | null;
+          p_reason: string | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: DdRecordRow;
+      };
+      schedule_hearing: {
+        Args: {
+          p_case_id: string;
+          p_case: Record<string, unknown>;
+          p_scheduled_at: string;
+          p_forum: string | null;
+          p_authority: string | null;
+          p_case_reference: string | null;
+          p_assigned_staff_id: string | null;
+          p_notes: string | null;
+          p_reason: string | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: { case: RecoveryCaseRow; hearing: CaseHearingRow; calendarEvent?: CalendarEventRow };
+      };
+      reschedule_hearing: {
+        Args: {
+          p_hearing_id: string;
+          p_case_id: string;
+          p_case: Record<string, unknown>;
+          p_new_scheduled_at: string;
+          p_forum: string | null;
+          p_authority: string | null;
+          p_case_reference: string | null;
+          p_assigned_staff_id: string | null;
+          p_notes: string | null;
+          p_reason: string | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: { case: RecoveryCaseRow; hearing: CaseHearingRow; calendarEvent: CalendarEventRow };
+      };
+      record_hearing_outcome: {
+        Args: {
+          p_hearing_id: string;
+          p_case_id: string;
+          p_case: Record<string, unknown>;
+          p_status: HearingStatus;
+          p_result: string | null;
+          p_reason: string | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: { case: RecoveryCaseRow; hearing: CaseHearingRow };
+      };
+      record_debtor_reply: {
+        Args: {
+          p_case_id: string;
+          p_case: Record<string, unknown>;
+          p_channel: Channel;
+          p_raw_body: string;
+          p_communication_id: string | null;
+          p_classification: ReplyClassification;
+          p_reason: string | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: { case: RecoveryCaseRow; reply: DebtorReplyRow };
+      };
     };
     Enums: {
       case_status: CaseStatus;
@@ -346,6 +512,8 @@ export interface Database {
       eligibility_route: EligibilityRoute;
       adapter_outcome: AdapterOutcome;
       task_type: TaskType;
+      dd_status: DdStatus;
+      hearing_status: HearingStatus;
     };
   };
 }

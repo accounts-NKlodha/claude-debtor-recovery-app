@@ -17,7 +17,13 @@ import {
 } from "@/domain/reminder";
 import { applyGstAutomationFailed, applyGstFiled, applyGstPrepared } from "@/domain/gst";
 import { applyMsmeAutomationFailed, applyMsmeFiled } from "@/domain/msme";
-import { applyDdPrepared, applyHearingScheduled } from "@/domain/hearing";
+import {
+  applyDdPrepared,
+  applyHearingAdjourned,
+  applyHearingOutcome,
+  applyHearingScheduled,
+} from "@/domain/hearing";
+import { applyReplyClassified } from "@/domain/debtor-reply";
 import { applyOcrCorrected } from "@/domain/ocr";
 import { createDraftCase, type IntakeInvoiceInput } from "@/domain/intake";
 import { parseCsv, parseDate, parseMoney, validateImport } from "@/domain/bulk-import";
@@ -25,6 +31,7 @@ import { runAdapter } from "@/orchestrator/run-adapter";
 import { getAdapters } from "@/adapters";
 import { gstComposeSchema, type GstComposeInput, type ManualInvoiceInput } from "@/contract/schemas";
 import type { MsmeStage } from "@/contract/adapters";
+import type { Channel, ReplyClassification } from "@/contract/enums";
 import type { Communication, Invoice, PaymentRecord, RecoveryCase } from "@/contract/types";
 import type { MutationActor } from "@/lib/auth/types";
 import type {
@@ -140,6 +147,18 @@ export class MemoryRepository implements Repository {
   }
   async listTasksForCase(caseId: string) {
     return tick(mock.listTasksForCase(caseId));
+  }
+  async listAllocationsForCase(caseId: string) {
+    return tick(mock.listAllocationsForCase(caseId));
+  }
+  async getDdRecord(caseId: string) {
+    return tick(mock.getDdRecord(caseId));
+  }
+  async listHearingsForCase(caseId: string) {
+    return tick(mock.listHearingsForCase(caseId));
+  }
+  async listDebtorRepliesForCase(caseId: string) {
+    return tick(mock.listDebtorRepliesForCase(caseId));
   }
 
   async listAllCommunications() {
@@ -357,6 +376,11 @@ export class MemoryRepository implements Repository {
   }
 
   async confirmPayment(paymentId: string, actor: MutationActor) {
+    const before = mock.PAYMENTS.find((p) => p.id === paymentId);
+    if (!before) throw new Error(`confirmPayment: payment ${paymentId} not found`);
+    if (before.clientConfirmed) {
+      throw new Error(`confirmPayment: payment ${paymentId} is already confirmed -- refusing to re-apply`);
+    }
     const payment = mock.markPaymentConfirmed(paymentId);
     const kase = mock.getCase(payment.caseId);
     if (!kase) throw new Error(`confirmPayment: case ${payment.caseId} not found`);
@@ -370,8 +394,17 @@ export class MemoryRepository implements Repository {
 
     for (const alloc of result.invoiceAllocations) {
       mock.mutateInvoice(alloc.invoiceId, { outstandingBalance: alloc.balanceAfter });
+      if (alloc.applied > 0) {
+        mock.insertAllocation({
+          organisationId: kase.organisationId,
+          paymentRecordId: paymentId,
+          invoiceId: alloc.invoiceId,
+          amount: alloc.applied,
+        });
+      }
     }
     const updatedCase = mock.mutateCase(kase.id, result.updatedCase);
+    mock.closeCaseTasksIfTerminal(kase.id, updatedCase.status);
     mock.appendAudit({
       action: "payment.confirmed",
       entity: "recovery_case",
@@ -715,11 +748,26 @@ export class MemoryRepository implements Repository {
     return tick({ case: updatedCase, diaryNumber, petitionPdfKey });
   }
 
-  async prepareDdTask(caseId: string, actor: MutationActor) {
+  async prepareDdTask(
+    caseId: string,
+    input: { amount?: number | null; payee?: string | null; reference?: string | null; notes?: string | null },
+    actor: MutationActor,
+  ) {
     const kase = mock.getCase(caseId);
     if (!kase) throw new Error(`prepareDdTask: case ${caseId} not found`);
     const prepared = applyDdPrepared(kase);
     const updatedCase = mock.mutateCase(caseId, prepared.updatedCase);
+    const dd = mock.upsertDdRecord(caseId, kase.organisationId, input);
+    mock.raiseTaskIfNotOpen({
+      caseId,
+      organisationId: kase.organisationId,
+      type: "dd_preparation",
+      title: "Prepare and dispatch MSEFC demand draft",
+      waitingOn: "client",
+      assigneeId: null,
+      urgent: false,
+      dueAt: null,
+    });
     mock.appendAudit({
       action: "dd.prepared",
       entity: "recovery_case",
@@ -728,40 +776,225 @@ export class MemoryRepository implements Repository {
       actorId: actor.actorId,
       actorRole: actor.actorRole,
     });
-    return tick({ case: updatedCase });
+    return tick({ case: updatedCase, dd });
   }
 
-  async scheduleHearing(caseId: string, startsAtIso: string, actor: MutationActor) {
+  async recordDdSubmitted(
+    caseId: string,
+    input: { submittedAt?: string | null; documentId?: string | null },
+    actor: MutationActor,
+  ) {
+    const before = mock.getDdRecord(caseId);
+    const dd = mock.markDdSubmitted(caseId, input);
+    if (before?.status !== "submitted") {
+      mock.TASKS.filter((t) => t.caseId === caseId && t.type === "dd_preparation" && !t.resolvedAt).forEach(
+        (t) => mock.resolveTask(t.id),
+      );
+      mock.appendAudit({
+        action: "dd.submitted",
+        entity: "recovery_case",
+        entityId: caseId,
+        reason: "DD handed over / submitted",
+        actorId: actor.actorId,
+        actorRole: actor.actorRole,
+      });
+    }
+    return tick(dd);
+  }
+
+  async scheduleHearing(
+    caseId: string,
+    input: {
+      startsAtIso: string;
+      forum?: string | null;
+      authority?: string | null;
+      caseReference?: string | null;
+      assignedStaffId?: string | null;
+      notes?: string | null;
+    },
+    actor: MutationActor,
+  ) {
     const kase = mock.getCase(caseId);
     if (!kase) throw new Error(`scheduleHearing: case ${caseId} not found`);
-    const startsAt = new Date(startsAtIso);
-    if (Number.isNaN(startsAt.getTime())) throw new Error(`scheduleHearing: invalid date "${startsAtIso}"`);
+    const startsAt = new Date(input.startsAtIso);
+    if (Number.isNaN(startsAt.getTime())) throw new Error(`scheduleHearing: invalid date "${input.startsAtIso}"`);
 
-    const idempotencyKey = `hearing:${caseId}:${startsAtIso}`;
+    const idempotencyKey = `hearing:${caseId}:${input.startsAtIso}`;
     const outcome = await runAdapter(
       (key) =>
         getAdapters().calendar.upsertEvent({
           idempotencyKey: key,
           caseId,
-          title: `MSEFC hearing — case ${caseId}`,
+          title: `${input.forum ?? "MSEFC hearing"} — case ${caseId}`,
           startsAt: startsAt.toISOString(),
           kind: "hearing",
         }),
       idempotencyKey,
     );
 
+    const existingOpen = mock.listHearingsForCase(caseId).find((h) => h.status === "scheduled");
+    const isExactRetry = existingOpen?.scheduledAt === startsAt.toISOString();
+
+    const hearing = mock.insertHearing(kase.organisationId, caseId, {
+      scheduledAt: startsAt.toISOString(),
+      forum: input.forum,
+      authority: input.authority,
+      caseReference: input.caseReference,
+      assignedStaffId: input.assignedStaffId,
+      notes: input.notes,
+    });
+    if (isExactRetry) return tick({ case: kase, hearing }); // idempotent no-op
+
     const scheduled = applyHearingScheduled(kase, startsAt);
     const updatedCase = mock.mutateCase(caseId, scheduled.updatedCase);
+    mock.raiseTaskIfNotOpen({
+      caseId,
+      organisationId: kase.organisationId,
+      type: "hearing_followup",
+      title: "Attend hearing and record outcome",
+      waitingOn: "staff",
+      assigneeId: null,
+      urgent: false,
+      dueAt: startsAt.toISOString(),
+    });
     mock.appendAudit({
       action: "hearing.scheduled",
       entity: "recovery_case",
       entityId: caseId,
-      reason: `${scheduled.note}; calendar event ${outcome.result.data?.eventId ?? "n/a"}`,
+      reason: `${scheduled.note}; calendar adapter event ${outcome.result.data?.eventId ?? "n/a"}`,
       actorId: actor.actorId,
       actorRole: actor.actorRole,
     });
 
-    return tick({ case: updatedCase, eventId: outcome.result.data?.eventId ?? null });
+    return tick({ case: updatedCase, hearing });
+  }
+
+  async rescheduleHearing(
+    hearingId: string,
+    caseId: string,
+    input: {
+      newStartsAtIso: string;
+      forum?: string | null;
+      authority?: string | null;
+      caseReference?: string | null;
+      assignedStaffId?: string | null;
+      notes?: string | null;
+    },
+    actor: MutationActor,
+  ) {
+    const kase = mock.getCase(caseId);
+    if (!kase) throw new Error(`rescheduleHearing: case ${caseId} not found`);
+    const newStartsAt = new Date(input.newStartsAtIso);
+    if (Number.isNaN(newStartsAt.getTime())) throw new Error(`rescheduleHearing: invalid date "${input.newStartsAtIso}"`);
+
+    const adjourned = applyHearingAdjourned(kase);
+    const scheduled = applyHearingScheduled({ ...kase, ...adjourned.updatedCase }, newStartsAt);
+    const updatedCase = mock.mutateCase(caseId, scheduled.updatedCase);
+    const hearing = mock.rescheduleHearingRecord(hearingId, {
+      newScheduledAt: newStartsAt.toISOString(),
+      forum: input.forum,
+      authority: input.authority,
+      caseReference: input.caseReference,
+      assignedStaffId: input.assignedStaffId,
+      notes: input.notes,
+    });
+    mock.appendAudit({
+      action: "hearing.rescheduled",
+      entity: "recovery_case",
+      entityId: caseId,
+      reason: `${adjourned.note}; ${scheduled.note}`,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
+    });
+    return tick({ case: updatedCase, hearing });
+  }
+
+  async recordHearingOutcome(
+    hearingId: string,
+    caseId: string,
+    input: { status: "completed" | "cancelled"; result?: string | null; recovered: boolean },
+    actor: MutationActor,
+  ) {
+    const kase = mock.getCase(caseId);
+    if (!kase) throw new Error(`recordHearingOutcome: case ${caseId} not found`);
+    const before = mock.listHearingsForCase(caseId).find((h) => h.id === hearingId);
+    const wasTerminal = before?.status === "completed" || before?.status === "cancelled";
+    const hearing = mock.markHearingOutcome(hearingId, input.status, input.result ?? null);
+    if (wasTerminal) return tick({ case: kase, hearing }); // idempotent no-op
+
+    const outcome = applyHearingOutcome(kase, input.recovered);
+    const updatedCase = mock.mutateCase(caseId, outcome.updatedCase);
+    mock.TASKS.filter((t) => t.caseId === caseId && t.type === "hearing_followup" && !t.resolvedAt).forEach((t) =>
+      mock.resolveTask(t.id),
+    );
+    mock.closeCaseTasksIfTerminal(caseId, updatedCase.status);
+    mock.appendAudit({
+      action: "hearing.outcome_recorded",
+      entity: "recovery_case",
+      entityId: caseId,
+      reason: outcome.note,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
+    });
+    return tick({ case: updatedCase, hearing });
+  }
+
+  async recordDebtorReply(
+    caseId: string,
+    input: { channel: Channel; rawBody: string; communicationId?: string | null; classification: ReplyClassification },
+    actor: MutationActor,
+  ) {
+    const kase = mock.getCase(caseId);
+    if (!kase) throw new Error(`recordDebtorReply: case ${caseId} not found`);
+    const classified = applyReplyClassified(kase, input.classification);
+    const updatedCase = mock.mutateCase(caseId, classified.updatedCase);
+    const reply = mock.insertDebtorReply(kase.organisationId, caseId, input, actor.actorId);
+
+    if (input.classification === "payment_made") {
+      mock.raiseTaskIfNotOpen({
+        caseId, organisationId: kase.organisationId, type: "payment_confirmation",
+        title: "Client to confirm receipt claimed by debtor", waitingOn: "client",
+        assigneeId: null, urgent: false, dueAt: null,
+      });
+    } else if (["dispute", "settlement_offer", "document_request"].includes(input.classification)) {
+      mock.raiseTaskIfNotOpen({
+        caseId, organisationId: kase.organisationId, type: "dispute_resolution",
+        title: `Staff to resolve debtor ${input.classification}`, waitingOn: "staff",
+        assigneeId: null, urgent: false, dueAt: null,
+      });
+    } else if (input.classification === "unclear") {
+      mock.raiseTaskIfNotOpen({
+        caseId, organisationId: kase.organisationId, type: "staff_validation",
+        title: "Staff to review unclear debtor reply", waitingOn: "staff",
+        assigneeId: null, urgent: false, dueAt: null,
+      });
+    }
+
+    mock.appendAudit({
+      action: "debtor_reply.recorded",
+      entity: "recovery_case",
+      entityId: caseId,
+      reason: classified.note,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
+    });
+    return tick({ case: updatedCase, reply });
+  }
+
+  async resolveWorkflowTask(taskId: string, reason: string, actor: MutationActor) {
+    const before = mock.TASKS.find((t) => t.id === taskId);
+    const task = mock.resolveTask(taskId);
+    if (!before?.resolvedAt) {
+      mock.appendAudit({
+        action: "task.resolved",
+        entity: "workflow_task",
+        entityId: taskId,
+        reason,
+        actorId: actor.actorId,
+        actorRole: actor.actorRole,
+      });
+    }
+    return tick(task);
   }
 
   async correctInvoiceOcr(
