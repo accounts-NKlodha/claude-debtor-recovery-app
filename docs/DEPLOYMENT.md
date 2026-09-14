@@ -220,42 +220,62 @@ with advisory-lock leader election to preserve idempotency invariants.
 
 ## 6. Backups (PRD §13)
 
+**Full disaster-recovery procedure, RPO/RTO targets, security-after-restore
+verification, and Auth-recovery findings are documented in
+[disaster-recovery/index.md](disaster-recovery/index.md) — this section is a
+short pointer plus the headline facts.**
+
 - On the Free plan, use manual off-site logical backups; do not assume daily
   managed backups or PITR are included. Paid backup upgrades require a separate
   cost decision. A database dump does not contain Storage object bytes.
-- Nightly `pg_dump` (encrypted, age/gpg) to a second bucket in a distinct
-  region from the primary (India-region no longer mandated — see the region
-  decision in §1; pick the second-region bucket for redundancy/durability,
-  not for a residency requirement).
-- Weekly **restore test** into a scratch project; confirm one full case audit
-  trail reconstructs (acceptance scenario 13).
+- Repeatable tooling exists: [`scripts/backup-database.ps1`](../scripts/backup-database.ps1)
+  and [`scripts/restore-database.ps1`](../scripts/restore-database.ps1) —
+  both tested for real (see 6a below), not just documented.
+- Weekly-or-better **restore test** into a disposable environment; confirm
+  one full case audit trail reconstructs (acceptance scenario 13).
 - Google Drive secondary copy is allowed but is **not** the sole evidence store.
 
-### 6a. Free-plan limitation, confirmed (P0-4 Gate B, 2026-09-13)
+### 6a. Free-plan limitation — confirmed, and a real backup/restore now proven (2026-09-15)
 
 Supabase's Free plan includes **no automated backups and no Point-in-Time
 Recovery (PITR)** — both start at the Pro tier (Pro: 7 daily backups
-included; PITR: a paid add-on on top of Pro). This project
-(`lsuudervqofienqabmaz`) is on the Free plan; per this task's explicit
-instruction, the plan was **not** upgraded to test this. Until upgraded (a
-deliberate, separate cost decision — see the go-live gates below), the
-*only* backup that exists is one you take yourself.
+included; PITR: a paid add-on on top of Pro). Production
+(`igagfxgzlojqrkaawnzx`, Sydney) is on the Free plan; re-confirmed live via
+`supabase backups list` during the disaster-recovery task
+(`pitr_enabled: false`, `backups: []`). Until upgraded (a deliberate,
+separate cost decision), the *only* backup that exists is one an operator
+takes themselves.
+
+Unlike the Gate B note below it (P0-4, 2026-09-13, project
+`lsuudervqofienqabmaz`), which could not exercise this end-to-end because no
+Docker daemon was available in that automated environment, the
+disaster-recovery task (2026-09-15) **did** run it for real: a live backup
+of production, a full restore into a disposable local Supabase stack,
+integrity checks (every restored row count matched production exactly),
+security-after-restore checks (12/12 pass — RLS, tenant isolation, anon
+RPC/table-write denial, audit immutability all intact post-restore), and an
+application recovery test (a local app instance served real, RLS-scoped
+data from the restored database). See
+[disaster-recovery/index.md](disaster-recovery/index.md) §7-§11 for the full
+results, checksums, and exact counts.
 
 ### 6b. Manual backup procedure (two options)
 
-**Option A — Supabase CLI, no raw DB password needed:**
+**Option A — Supabase CLI, no raw DB password needed — now the recommended, tested path:**
 
-```bash
-supabase db dump --linked -f backup-$(date +%Y%m%d).sql
+```powershell
+.\scripts\backup-database.ps1 -ProjectRef igagfxgzlojqrkaawnzx
 ```
 
-Uses the same access-token session as `supabase link`/`db push` (no
-`--password` prompt). **Requires Docker Desktop running locally** — the CLI
-runs `pg_dump` inside a container. This was not runnable in the automated
-Gate B environment (no Docker daemon available there); this exact command
-was not executed end-to-end during Gate B for that reason, not because of
-any credential restriction — run it yourself wherever Docker is available
-to actually validate the dump.
+Wraps two `supabase db dump --linked` calls (schema, then `--data-only` —
+a single plain dump is schema-only, confirmed live) using the same
+access-token session as `supabase link`/`db push` (no `--password`
+prompt). **Requires Docker Desktop running locally** — the CLI runs
+`pg_dump` inside a container. Verifies both output files are non-empty and
+prints their SHA-256 checksums. See
+[disaster-recovery/index.md](disaster-recovery/index.md) §4 for the script's
+safety properties (never handles a password/token/key, refuses to back up
+the wrong project).
 
 **Option B — direct `pg_dump`, requires the database password:**
 
@@ -266,25 +286,32 @@ pg_dump "$DATABASE_URL" -f backup-$(date +%Y%m%d).sql --no-owner --no-privileges
 Get `DATABASE_URL` (with password) from Supabase Dashboard → Project
 Settings → Database → Connection string. Needs `pg_dump` installed locally
 (matching the project's Postgres major version — 17, per this project's
-`database.version`).
+`database.version`). Not the tested path (Option A was used for the real
+test) — kept documented as a fallback if the Supabase CLI/Docker path is
+unavailable.
 
-**Restore test** (either option's output), into a **scratch** project —
-never restore over a live one to "test":
+**Restore**, into a **disposable** environment — never restore over a live
+one:
 
-```bash
-psql "$SCRATCH_DATABASE_URL" -v ON_ERROR_STOP=1 -f backup-YYYYMMDD.sql
+```powershell
+.\scripts\restore-database.ps1 -SchemaFile <path> -DataFile <path>
 ```
 
-Then confirm row counts and one full case's audit trail
-(`audit_events` filtered by `entity_id`) reconstruct correctly — this is
-acceptance scenario 13. **Not executed in Gate B** (would require
-provisioning a second scratch project); documented here as the exact
-procedure to run before go-live, not claimed as verified.
+Restores into the local `supabase start` dev stack only (the script has no
+parameter for a remote target, by design — it cannot be pointed at
+production even by mistake). For restoring into a genuinely new production
+project during a real incident, see the emergency sequence in
+[disaster-recovery/index.md](disaster-recovery/index.md) §18. Confirm row
+counts and one full case's audit trail (`audit_events` filtered by
+`entity_id`) reconstruct correctly — this is acceptance scenario 13,
+**now executed and passing** (2026-09-15) — see
+[disaster-recovery/index.md](disaster-recovery/index.md) §9.
 
 A database dump does **not** include Supabase Storage object bytes (invoice
 scans, portal screenshots) — those need a separate `storage.objects` +
-bucket-contents backup once Storage buckets are actually in use (not yet,
-per this build's scope).
+bucket-contents backup once Storage buckets are actually in use (confirmed
+zero buckets exist as of 2026-09-15, not yet material — see
+[disaster-recovery/index.md](disaster-recovery/index.md) §12).
 
 ## 7. Go-live gates (do not skip)
 

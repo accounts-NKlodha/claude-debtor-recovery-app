@@ -58,3 +58,11 @@ next-env.d.ts
 
 # Supabase CLI local link cache (machine-specific, regenerable via `supabase link`)
 /supabase/.temp/
+
+# Supabase CLI local branch-tracking state (created by `supabase start`,
+# machine-local, regenerable)
+/supabase/.branches/
+
+# Database backups (disaster-recovery task) -- logical dumps of production
+# data, never committed. See docs/disaster-recovery/index.md.
+/backups/

@@ -30,6 +30,12 @@ government filing**.
 - [ ] 12. Client cannot access another client's case/document/rating/AI context.
       *(RLS: `supabase/migrations/0002_rls.sql`; test plan in `supabase/README.md`)*
 - [ ] 13. Backup restore reconstructs a full case audit trail.
+      *(disaster-recovery task, 2026-09-15: a real backup+restore was performed
+      and `audit_events` restored intact (65/65 rows, matching production
+      exactly) — but production currently has zero real case data, so no
+      case-linked audit trail exists yet to reconstruct as a concrete example.
+      Mechanism proven; re-verify with a real case once one exists. See
+      `docs/disaster-recovery/index.md` §7-§9.)*
 - [ ] 14. High-confidence intake advances through deterministic prep but stops at
       every client/staff/legal/portal gate. *(covered: `workflow.test.ts`)*
 - [ ] 15. Human checkpoint completion auto-resumes the recorded next step, no
@@ -50,6 +56,10 @@ government filing**.
       `ap-southeast-2` (Sydney), business-accepted, see
       `docs/MUMBAI_BOOTSTRAP.md`); migrations applied; RLS test plan run.
 - [ ] Daily backup + one successful restore test recorded.
+      *(one successful real backup+restore test IS now recorded — 2026-09-15,
+      see `docs/disaster-recovery/index.md`. Daily cadence itself is not yet
+      operationalized — still a manual, on-demand script, not a scheduled
+      task; see §16 of that doc for the Task Scheduler recommendation.)*
 - [ ] Kill switch reachable by Admin; pause/resume/skip require a reason (audited).
 - [ ] Manual send + manual portal filing paths verified working alongside automation.
 - [ ] Error budget + weekly automation-error review scheduled.
