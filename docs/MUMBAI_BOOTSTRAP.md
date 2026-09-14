@@ -5,16 +5,28 @@ record). Documents the bootstrap of the project named **"Mumbai Debtor
 recovery"** (ref `igagfxgzlojqrkaawnzx`) from a clean state against the
 approved production architecture (baseline `a1a60f6`).
 
-## Critical finding: not actually in Mumbai
+## Region finding: not actually in Mumbai — CLOSED / ACCEPTED (2026-09-15)
 
 Despite its display name and its intended purpose, `supabase projects list`
 and `supabase backups list` both report this project's actual region as
 **`ap-southeast-2` (Sydney, Australia)** — not `ap-south-1` (Mumbai). This
 was discovered before any migrations were applied and reported to the task
 owner immediately; the technical bootstrap was continued anyway (the work is
-valid and reusable regardless of region), but **this is a hard blocker
-against India data-residency** (PRD §13/§14) and against calling this
-project production-ready. See the region note in `docs/DEPLOYMENT.md` §1.
+valid and reusable regardless of region).
+
+At the time this document was first written, this was recorded as a hard
+blocker against the PRD §13/§14 India-residency language and this project's
+production-ready status. **That is now resolved: by business decision
+(2026-09-15), Sydney production hosting is explicitly accepted, and India/
+Mumbai data residency is NOT a hard requirement for this project.** The
+current production Supabase project (`igagfxgzlojqrkaawnzx`, `ap-southeast-2`)
+is accordingly production-accepted on residency grounds. Region selection
+remains subject to performance, security, contractual and applicable
+compliance requirements (e.g. DPDP) at the time of any future decision — this
+closes the specific `ap-south-1` assumption, not all future region review.
+**Do not provision another Supabase project solely to satisfy India
+residency.** See the region-decision note in `docs/DEPLOYMENT.md` §1 and the
+amendment in `docs/adr/0001-stack-and-supabase-seam.md`.
 
 A project's display name is never evidence of its region — the Seoul project
 from Gate B had no "Seoul" in its name either. Always confirm with
@@ -117,9 +129,9 @@ data is loaded.
 
 ## Remaining user-only steps
 
-- **Resolve the region blocker** (see above) before any real client data is
-  loaded — this project cannot be called production-ready on residency
-  grounds regardless of how clean the technical bootstrap is.
+- ~~Resolve the region blocker~~ — **closed 2026-09-15**: Sydney hosting is
+  business-accepted; no region migration is required (see region-decision
+  note above).
 - Delete the four Supabase Auth test users (`mumbai-smoketest-{staff,admin,
   clienta,clientb}@nklodha.in`) via Dashboard → Authentication → Users. Their
   `app_users` rows will remain permanently (see above) — this is expected

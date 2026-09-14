@@ -3,9 +3,14 @@
 Status: **CORE VERIFICATION COMPLETE, DIRECT-TABLE-WRITE AUDIT BYPASS
 CLOSED (R3).** Migrations, RLS, RPCs, audit chain, and every requested
 attack scenario were exercised live against a real Supabase project with
-real authenticated sessions. OAuth/browser-cookie integration and
-India-region residency remain open (see below) — Gate B is not the same
-thing as "production-ready."
+real authenticated sessions. OAuth/browser-cookie integration remains open;
+India-region residency was open at the time this record was written but is
+now **closed by business decision (2026-09-15) — Sydney (`ap-southeast-2`)
+hosting is explicitly accepted, India/Mumbai residency is not a hard
+requirement.** See `docs/MUMBAI_BOOTSTRAP.md` and `docs/DEPLOYMENT.md` §1.
+Gate B (this Seoul project) was never the production project regardless —
+see `docs/MUMBAI_BOOTSTRAP.md` for the project actually bootstrapped for
+production use.
 
 ## R3: direct-table-write audit bypass — CLOSED
 
@@ -36,12 +41,13 @@ audit hash chain) re-run and still passes.
 ## Live project
 
 - Project ref: `lsuudervqofienqabmaz`, region **`ap-northeast-2` (Seoul)** —
-  not `ap-south-1` (Mumbai), the documented target. This was the project
-  already provisioned and handed over for this task; no region migration
-  was performed (no in-place region migration exists; would need a fresh
-  `ap-south-1` project + dump/restore). See `docs/DEPLOYMENT.md`'s
-  provision section for the explicit note and what's required before real
-  client data goes near this project.
+  not `ap-south-1` (Mumbai), the region originally documented as the target
+  at the time this record was written (that target is no longer mandatory;
+  see the region-decision note above). This was the project already
+  provisioned and handed over for this task; no region migration was
+  performed. This Seoul project was never the production project — see
+  `docs/MUMBAI_BOOTSTRAP.md` for the project actually bootstrapped for
+  production use.
 - Plan: Free. Not upgraded, per instruction. No automated backups/PITR
   exist for this project — see `docs/DEPLOYMENT.md` §6a/§6b.
 
@@ -249,7 +255,8 @@ wrong):
 
 ## Remaining human/account steps (unchanged in kind from the prior session's note)
 
-Google Cloud OAuth client setup, an explicit India-region residency
-decision (stay on Seoul vs. provision fresh in Mumbai and cut over), and a
-Supabase plan upgrade (if automated backups/PITR are wanted before real
-go-live) all remain human decisions outside this session's scope.
+Google Cloud OAuth client setup and a Supabase plan upgrade (if automated
+backups/PITR are wanted before real go-live) remain human decisions outside
+this session's scope. The India-region residency decision referenced above
+is **resolved** (2026-09-15, business-accepted Sydney) — no region cutover
+is required; see `docs/MUMBAI_BOOTSTRAP.md`.

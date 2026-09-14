@@ -18,7 +18,7 @@ preparation* actions automated (not unattended government filing).
 | --- | --- | --- |
 | App | Next.js (App Router) + TypeScript, single codebase | wrapper brief |
 | Ships as | Tauri v2 desktop now; self-hosted `debtor.nklodha.in` later | wrapper brief |
-| Data/Auth/Storage | Supabase (Postgres + Auth + Storage + RLS) now, **behind adapter seams** for later self-host migration | Q&A decision; PRD §13/14 residency |
+| Data/Auth/Storage | Supabase (Postgres + Auth + Storage + RLS) now, **behind adapter seams** for later self-host migration | Q&A decision; PRD §13/14 residency¹ |
 | UI | Tailwind v4 + hand-rolled shadcn-style primitives + Framer Motion; charts via Recharts (`dataviz`) | wrapper brief |
 | Money | integer paise, INR only, Indian digit grouping | PRD §9 |
 | Time | store UTC, operate IST; sends at 11:00 IST, skip Sunday | PRD §5 |
@@ -26,6 +26,13 @@ preparation* actions automated (not unattended government filing).
 | Integrations | provider-neutral adapters returning a 5-value outcome union; retry-once-then-urgent-task | PRD §16 |
 | External deps this build | **mocked** (AiSensy, Gmail, GST/MSME runner, payment, calendar) | Q&A decision |
 | Legally-gated flows | built in `prepare`/`assist` mode, live submission stubbed, flagged non-production | PRD §10/17/19 |
+
+¹ **Region decision (2026-09-15):** the India/Mumbai (`ap-south-1`) residency
+implied by PRD §13/14 is no longer a hard requirement for this project —
+Sydney (`ap-southeast-2`) production hosting is explicitly business-accepted.
+See `docs/MUMBAI_BOOTSTRAP.md` and `docs/adr/0001-stack-and-supabase-seam.md`
+("Amendment — 2026-09-15"). The adapter-seam architecture itself is
+unaffected and still applies regardless of region.
 
 ## 3. Capability map (modules)
 

@@ -5,7 +5,7 @@ title: "Security and Compliance Checklist"
 
 # Security and Compliance Checklist
 
-- Primary storage and backups in India.
+- Primary storage and backups: **region decision (2026-09-15, see `docs/MUMBAI_BOOTSTRAP.md`): Sydney (`ap-southeast-2`) hosting is explicitly business-accepted; India/Mumbai (`ap-south-1`) data residency is NOT a hard requirement for this project.** Region selection remains subject to performance, security, contractual and applicable compliance requirements at the time of each decision — this is not a blanket exemption from future regulatory review (e.g. DPDP), only a closure of the earlier assumption that `ap-south-1` was mandatory.
 - Google sign-in allow-list for staff; client OTP authentication; never store OTPs.
 - Encrypt sensitive data at rest/in transit; isolate credentials from normal application data.
 - If passwords are vaulted, require envelope encryption, least privilege, just-in-time access, rotation, revocation, operator audit and emergency disablement.

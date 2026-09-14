@@ -45,7 +45,10 @@ government filing**.
 
 - [ ] `npm run verify` green on CI for the release commit.
 - [ ] `npm run e2e` green (smoke + axe, chromium + mobile).
-- [ ] Supabase project in `ap-south-1`; migrations applied; RLS test plan run.
+- [ ] Supabase project provisioned (region per business decision 2026-09-15 —
+      `ap-south-1` is no longer mandatory; the current production project is
+      `ap-southeast-2` (Sydney), business-accepted, see
+      `docs/MUMBAI_BOOTSTRAP.md`); migrations applied; RLS test plan run.
 - [ ] Daily backup + one successful restore test recorded.
 - [ ] Kill switch reachable by Admin; pause/resume/skip require a reason (audited).
 - [ ] Manual send + manual portal filing paths verified working alongside automation.

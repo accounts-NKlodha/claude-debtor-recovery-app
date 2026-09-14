@@ -1,45 +1,43 @@
 # Deploying Debtrecover at `debtor.nklodha.in`
 
 Target: self-hosted Next.js server behind the existing `nklodha.in` reverse proxy,
-with Supabase (Mumbai `ap-south-1`) for Postgres + Auth + Storage. This is the
-"web" target of the same codebase that produces the Tauri desktop app.
+with Supabase for Postgres + Auth + Storage. This is the "web" target of the
+same codebase that produces the Tauri desktop app.
+
+**Region: `ap-southeast-2` (Sydney)**, business-accepted 2026-09-15 — India/
+Mumbai (`ap-south-1`) residency is no longer a hard requirement for this
+project. See the region-decision note below.
 
 ## 1. Provision
 
 | Component | Action |
 | --- | --- |
 | DNS | `debtor.nklodha.in` A/AAAA → the app host (or CNAME to the portal load balancer) |
-| Supabase | Create project in **`ap-south-1`**. Note the project URL, `anon` key, `service_role` key, and the pooled `DATABASE_URL`. |
+| Supabase | Create (or reuse) a project — region per the current business decision (`ap-southeast-2`/Sydney is accepted; see note below), subject to performance/security/contractual/compliance review at decision time. Note the project URL, `anon` key, `service_role` key, and the pooled `DATABASE_URL`. |
 | Object storage | Use Supabase Storage buckets `evidence` (private) and `portal-artifacts` (private). No public buckets. |
 | TLS | Terminate at the proxy; force HTTPS; HSTS on. |
 
-> **P0-4 Gate B region note:** the live project used for Gate B live-verification
-> (`lsuudervqofienqabmaz`) was provisioned in **`ap-northeast-2` (Seoul)**, not
-> `ap-south-1` (Mumbai). This was the region already selected when the project
-> was created for this task; per the task's own instruction, **no region
-> migration was performed during Gate B** (that's a separate, deliberate
-> operation — Supabase has no in-place region migration, only
-> dump-and-restore into a new `ap-south-1` project). This is a genuine
-> deviation from the PRD §13/§14 India-residency requirement and the
-> `ap-south-1` target above, and is **not resolved** by anything in this
-> document.
+> **Region decision — CLOSED / ACCEPTED (2026-09-15).** Historical record: the
+> Gate B live-verification project (`lsuudervqofienqabmaz`) was provisioned in
+> `ap-northeast-2` (Seoul); the project subsequently named "Mumbai Debtor
+> recovery" (`igagfxgzlojqrkaawnzx`) was, despite its name, actually
+> provisioned in `ap-southeast-2` (Sydney) — discovered live during the
+> Mumbai bootstrap (`docs/MUMBAI_BOOTSTRAP.md`) and reported to the task
+> owner before further work proceeded. Both deviated from the PRD §13/§14
+> India-residency language and the `ap-south-1` target this document
+> originally stated.
 >
-> **Mumbai production-bootstrap region note (2026-09-13/14):** the project
-> subsequently provisioned and named **"Mumbai Debtor recovery"**
-> (`igagfxgzlojqrkaawnzx`), explicitly intended to be the real production
-> environment, was **also not created in `ap-south-1`** — `supabase projects
-> list` and `supabase backups list` both report its actual region as
-> **`ap-southeast-2` (Sydney, Australia)**. This was discovered live during
-> the bootstrap (see `docs/MUMBAI_BOOTSTRAP.md`) and reported to the task
-> owner before any further work proceeded. The project's display name is not
-> evidence of its region — always confirm via `supabase projects list`
-> (`"region"` field), never by name alone. **India-residency is still not
-> satisfied by any project provisioned in this session.** Before real client
-> data goes live: provision a fresh project with region explicitly confirmed
-> as `ap-south-1` at creation time, then run the same migration-application
-> and admin-bootstrap procedure documented in `docs/MUMBAI_BOOTSTRAP.md` and
-> `docs/ADMIN_BOOTSTRAP.md` against it — do not treat either the Seoul or the
-> "Mumbai" (Sydney) project as production-ready on residency grounds alone.
+> **Business decision (2026-09-15): Sydney production hosting is explicitly
+> accepted. India/Mumbai data residency is NOT a hard requirement for this
+> project.** The current production Supabase project (`igagfxgzlojqrkaawnzx`)
+> remains in `ap-southeast-2` and is production-accepted on residency
+> grounds — **do not provision another Supabase project solely to satisfy
+> India residency.** Region selection remains subject to performance,
+> security, contractual and applicable compliance requirements (e.g. DPDP)
+> at the time of any future decision — this closes the specific `ap-south-1`
+> assumption, not all future region review. A project's display name is
+> never evidence of its region; always confirm via `supabase projects list`
+> (the `"region"` field).
 
 ## 2. Configure
 
@@ -49,7 +47,7 @@ Create `.env.production` (never commit) from `.env.example`:
 NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon>
 SUPABASE_SERVICE_ROLE_KEY=<service_role>      # server only, only for createAdminClient() -- see §3a
-DATABASE_URL=postgresql://...ap-south-1...    # for migrations
+DATABASE_URL=postgresql://...<region>...      # for migrations -- region per current business decision, see §1
 NEXT_PUBLIC_APP_URL=https://debtor.nklodha.in
 ADAPTER_PROFILE=mock                          # switch to "live" once providers are provisioned
 ```
@@ -213,7 +211,10 @@ with advisory-lock leader election to preserve idempotency invariants.
 - On the Free plan, use manual off-site logical backups; do not assume daily
   managed backups or PITR are included. Paid backup upgrades require a separate
   cost decision. A database dump does not contain Storage object bytes.
-- Nightly `pg_dump` (encrypted, age/gpg) to a second India-region bucket.
+- Nightly `pg_dump` (encrypted, age/gpg) to a second bucket in a distinct
+  region from the primary (India-region no longer mandated — see the region
+  decision in §1; pick the second-region bucket for redundancy/durability,
+  not for a residency requirement).
 - Weekly **restore test** into a scratch project; confirm one full case audit
   trail reconstructs (acceptance scenario 13).
 - Google Drive secondary copy is allowed but is **not** the sole evidence store.
