@@ -24,6 +24,7 @@ import {
   FileSpreadsheet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { signOutAction } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar } from "@/components/ui/avatar";
@@ -133,6 +134,15 @@ export function AppShell({
   const [collapsed, setCollapsed] = React.useState(false);
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const [org, setOrg] = React.useState(organisations[0]);
+  const [signingOut, setSigningOut] = React.useState(false);
+
+  const handleSignOut = () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    // signOutAction() always ends in redirect(), resolved server-side --
+    // this only needs to guard against a double-click while it's in flight.
+    void signOutAction().catch(() => setSigningOut(false));
+  };
 
   return (
     <div className="flex min-h-screen w-full flex-col">
@@ -204,7 +214,9 @@ export function AppShell({
             <DropdownMenuItem>Profile</DropdownMenuItem>
             <DropdownMenuItem>Preferences</DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>Sign out</DropdownMenuItem>
+            <DropdownMenuItem onClick={handleSignOut} disabled={signingOut}>
+              {signingOut ? "Signing out…" : "Sign out"}
+            </DropdownMenuItem>
           </DropdownMenu>
         </div>
       </header>

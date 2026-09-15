@@ -56,14 +56,14 @@ A migration file replays automatically on every fresh database via
 ## Procedure
 
 1. **Prerequisite:** the intended admin must already have a real
-   `auth.users` row. Once Google OAuth is configured
-   (`docs/DEPLOYMENT.md` §"Authentication"), have them sign in once through
-   the app — they'll land at `/sign-in?error=access` (correct: they aren't
-   provisioned yet) but a real `auth.users` row now exists for their email.
-   Before OAuth is configured (e.g. for the very first admin during initial
-   setup), a project owner may instead create the identity directly via
-   Supabase Dashboard → Authentication → Users → **Add user**, with
-   **Auto Confirm User** checked.
+   `auth.users` row. V1 authentication is Supabase email + password (not
+   Google OAuth — see `docs/DEPLOYMENT.md` §"Authentication"; OAuth was
+   removed from the codebase entirely during final UAT). A project owner
+   creates the identity via Supabase Dashboard → Authentication → Users →
+   **Add user**, with **Auto Confirm User** checked, setting a password the
+   admin will use to sign in at `/sign-in`. Signing in before step 3 below
+   lands at `/sign-in?error=access` (correct: not provisioned yet), but
+   confirms the `auth.users` row is real and the password works.
 
 2. In the Supabase Dashboard, go to **Authentication → Users**, find that
    person by email, and copy their **User UID**.

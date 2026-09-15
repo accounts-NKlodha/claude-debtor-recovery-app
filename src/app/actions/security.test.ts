@@ -122,13 +122,28 @@ describe("recordPaymentAction / confirmPaymentAction (real entry points)", () =>
   });
 });
 
+function automationFormData(nextEnabled: boolean, reason: string): FormData {
+  const fd = new FormData();
+  fd.set("nextEnabled", String(nextEnabled));
+  fd.set("reason", reason);
+  return fd;
+}
+
 describe("setAutomationStateAction: admin-only privileged path (real entry point)", () => {
   it("cannot be reached through an ordinary staff authorization -- it calls authorizeAdminMutation, not authorizeStaffMutation", async () => {
     authorizeAdminMutation.mockRejectedValue(new ForbiddenError("Admin session required"));
     const { setAutomationStateAction } = await import("./settings");
     const before = mock.getAutomationEnabled();
 
-    await expect(setAutomationStateAction(!before, "attempted by non-admin")).rejects.toThrow(ForbiddenError);
+    // Returns a generic denial as state -- never throws across the action
+    // boundary (final-UAT go-live task: a thrown error here crashed the
+    // client in production; see src/app/actions/settings.ts).
+    const result = await setAutomationStateAction(
+      { enabled: before, error: null },
+      automationFormData(!before, "attempted by non-admin"),
+    );
+    expect(result.error).toBe("You do not have permission to change this setting.");
+    expect(result.enabled).toBe(before); // no state change
     expect(mock.getAutomationEnabled()).toBe(before); // no state change
     expect(authorizeStaffMutation).not.toHaveBeenCalled();
   });
@@ -138,12 +153,28 @@ describe("setAutomationStateAction: admin-only privileged path (real entry point
     const { setAutomationStateAction } = await import("./settings");
     const before = mock.getAutomationEnabled();
 
-    await setAutomationStateAction(!before, "drift investigation");
+    const result = await setAutomationStateAction(
+      { enabled: before, error: null },
+      automationFormData(!before, "drift investigation"),
+    );
+    expect(result.error).toBeNull();
+    expect(result.enabled).toBe(!before);
     expect(mock.getAutomationEnabled()).toBe(!before);
     const audit = await latestAudit();
     expect(audit.actorId).toBe(STAFF_B.actorId);
 
-    await setAutomationStateAction(before, "restore"); // cleanup for other tests
+    await setAutomationStateAction({ enabled: !before, error: null }, automationFormData(before, "restore")); // cleanup for other tests
+  });
+
+  it("rejects a missing reason as state, never touching the repository", async () => {
+    authorizeAdminMutation.mockResolvedValue(STAFF_B);
+    const { setAutomationStateAction } = await import("./settings");
+    const before = mock.getAutomationEnabled();
+
+    const result = await setAutomationStateAction({ enabled: before, error: null }, automationFormData(!before, "  "));
+    expect(result.error).toBe("A reason is required before changing the global automation switch.");
+    expect(mock.getAutomationEnabled()).toBe(before);
+    expect(authorizeAdminMutation).not.toHaveBeenCalled();
   });
 });
 
@@ -279,7 +310,14 @@ describe("hearing.ts / ocr.ts / manual-invoice.ts / bulk-import.ts: authenticate
     expect(mock.TASKS.find((t) => t.id === task.id)?.resolvedAt).toBeNull();
   });
 
-  it("sendInitialReminderAction rejects with no session and never records a communication or sends anything", async () => {
+  function reminderFormData(caseId: string, forceRetryAfterAmbiguous = false): FormData {
+    const fd = new FormData();
+    fd.set("caseId", caseId);
+    fd.set("forceRetryAfterAmbiguous", String(forceRetryAfterAmbiguous));
+    return fd;
+  }
+
+  it("sendInitialReminderAction returns a generic error state (never throws) with no session, and never records a communication or sends anything", async () => {
     authorizeStaffMutation.mockRejectedValue(new UnauthenticatedError());
     const { sendInitialReminderAction } = await import("./reminders");
     const org = mock.ORGANISATIONS[0];
@@ -297,7 +335,8 @@ describe("hearing.ts / ocr.ts / manual-invoice.ts / bulk-import.ts: authenticate
     });
     const before = mock.COMMUNICATIONS.length;
 
-    await expect(sendInitialReminderAction(kase.id)).rejects.toThrow(UnauthenticatedError);
+    const result = await sendInitialReminderAction({ kind: "idle" }, reminderFormData(kase.id));
+    expect(result.kind).toBe("error");
     expect(mock.COMMUNICATIONS.length).toBe(before);
   });
 
@@ -321,7 +360,7 @@ describe("hearing.ts / ocr.ts / manual-invoice.ts / bulk-import.ts: authenticate
       groupKey: null, createdAt: new Date().toISOString(), activatedAt: new Date().toISOString(), closedAt: null,
     });
 
-    await sendInitialReminderAction(kase.id);
+    await sendInitialReminderAction({ kind: "idle" }, reminderFormData(kase.id));
     const audit = (await getRepo().listAuditLog(10)).find((a) => a.entityId === kase.id && a.action === "reminder.sent");
     expect(audit?.actorId).toBe(STAFF_B.actorId);
     expect(audit?.actorId).not.toBe("attacker-forged-id");

@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { useActionState } from "react";
+import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Power, CircleAlert } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -8,7 +10,16 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { setAutomationStateAction } from "@/app/actions/settings";
+import { setAutomationStateAction, type AutomationSwitchState } from "@/app/actions/settings";
+
+function SaveButton({ nextValue }: { nextValue: boolean }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" disabled={pending} variant={nextValue ? "primary" : "danger"}>
+      {pending ? "Saving…" : nextValue ? "Enable automation" : "Disable automation"}
+    </Button>
+  );
+}
 
 export function SettingsScreen({
   enabled: initialEnabled,
@@ -20,29 +31,20 @@ export function SettingsScreen({
   portalRunCount: number;
 }) {
   const router = useRouter();
-  const [enabled, setEnabled] = React.useState(initialEnabled);
-  const [reason, setReason] = React.useState("");
-  const [pending, setPending] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-
+  const [state, formAction] = useActionState<AutomationSwitchState, FormData>(setAutomationStateAction, {
+    enabled: initialEnabled,
+    error: null,
+  });
+  const { enabled, error } = state;
   const nextValue = !enabled;
+  const prevEnabledRef = React.useRef(initialEnabled);
 
-  const save = () => {
-    if (!reason.trim()) {
-      setError("A reason is required before changing the global automation switch.");
-      return;
+  React.useEffect(() => {
+    if (state.enabled !== prevEnabledRef.current) {
+      prevEnabledRef.current = state.enabled;
+      router.refresh();
     }
-    setPending(true);
-    setError(null);
-    setAutomationStateAction(nextValue, reason)
-      .then((res) => {
-        setEnabled(res.enabled);
-        setReason("");
-        router.refresh();
-      })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to save"))
-      .finally(() => setPending(false));
-  };
+  }, [state.enabled, router]);
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -78,27 +80,28 @@ export function SettingsScreen({
             )}
           </div>
 
-          <div className="flex flex-col gap-1">
-            <Label htmlFor="kill-reason">Reason for change</Label>
-            <Textarea
-              id="kill-reason"
-              rows={3}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="Required before disabling or re-enabling automation"
-            />
-          </div>
+          <form action={formAction} className="flex flex-col gap-4">
+            <input type="hidden" name="nextEnabled" value={String(nextValue)} />
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="kill-reason">Reason for change</Label>
+              <Textarea
+                id="kill-reason"
+                name="reason"
+                rows={3}
+                required
+                placeholder="Required before disabling or re-enabling automation"
+              />
+            </div>
 
-          <div className="flex items-center gap-3">
-            <Button onClick={save} disabled={pending} variant={nextValue ? "primary" : "danger"}>
-              {pending ? "Saving…" : nextValue ? "Enable automation" : "Disable automation"}
-            </Button>
-            {error ? (
-              <span className="flex items-center gap-1.5 text-xs text-danger" role="alert">
-                <CircleAlert className="h-3.5 w-3.5" /> {error}
-              </span>
-            ) : null}
-          </div>
+            <div className="flex items-center gap-3">
+              <SaveButton nextValue={nextValue} />
+              {error ? (
+                <span className="flex items-center gap-1.5 text-xs text-danger" role="alert">
+                  <CircleAlert className="h-3.5 w-3.5" /> {error}
+                </span>
+              ) : null}
+            </div>
+          </form>
         </CardContent>
       </Card>
 

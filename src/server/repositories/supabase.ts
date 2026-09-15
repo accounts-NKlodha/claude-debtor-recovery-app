@@ -42,6 +42,7 @@ import { createDraftCase, type IntakeInvoiceInput } from "@/domain/intake";
 import { parseCsv, parseDate, parseMoney, validateImport } from "@/domain/bulk-import";
 import { runAdapter } from "@/orchestrator/run-adapter";
 import { getAdapters } from "@/adapters";
+import { isProductionRuntime } from "@/lib/config/production";
 import { gstComposeSchema, type GstComposeInput, type ManualInvoiceInput } from "@/contract/schemas";
 import type { MsmeStage } from "@/contract/adapters";
 import type {
@@ -1080,16 +1081,28 @@ export class SupabaseRepository implements Repository {
       invoiceNumber: invoices[0]?.invoiceNumber ?? null,
     });
 
+    // WhatsApp has no real production provider (src/adapters/index.ts keeps
+    // it mocked unconditionally) -- the mock adapter reports fake success
+    // with a realistic-looking `wamid.*` providerRef for virtually every
+    // send, which would silently advance a real case's reminder timer and
+    // record a communication_delivery claiming a WhatsApp send that never
+    // happened. Attempting it at all in production is therefore unsafe;
+    // it is only ever attempted outside production, where the mock is an
+    // explicit, understood demo/test affordance (final-UAT go-live task).
     const channels: { channel: "whatsapp" | "email"; to: string; templateKey: string; templateVersion: number; subject: string | null }[] = [];
-    if (debtor?.mobile) {
+    if (debtor?.mobile && !isProductionRuntime()) {
       channels.push({ channel: "whatsapp", to: debtor.mobile, templateKey: "reminder_initial_v3", templateVersion: 3, subject: null });
     }
     if (debtor?.email) {
       channels.push({ channel: "email", to: debtor.email, templateKey: "reminder_initial_email_v1", templateVersion: 1, subject });
     }
     if (channels.length === 0) {
+      const reason =
+        isProductionRuntime() && debtor?.mobile && !debtor?.email
+          ? "case has a mobile number but no email on file, and WhatsApp is not an available production channel -- add a debtor email"
+          : "no mobile or email on file";
       throw new Error(
-        `sendInitialReminder: case ${caseId}'s debtor has no mobile or email on file -- nothing to send. Correct the debtor's contact details first.`,
+        `sendInitialReminder: case ${caseId}'s debtor has ${reason} -- nothing to send. Correct the debtor's contact details first.`,
       );
     }
 

@@ -25,8 +25,6 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isPublic =
     pathname === "/sign-in" ||
-    pathname === "/auth/google" ||
-    pathname === "/auth/callback" ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api/health") ||
     pathname === "/favicon.ico";

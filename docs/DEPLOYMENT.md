@@ -153,35 +153,48 @@ verified**: any of this actually executing against a live Supabase project, real
 RLS enforcement against real JWTs, or concurrency behavior under real load — these
 remain go-live gates, not something code compiling or unit tests passing can prove.
 
-### Authentication (P0-1/P0-2 foundation)
+### Authentication (final-UAT go-live task, 2026-09-15)
 
-Code-side (`src/lib/auth/`, `src/proxy.ts`) is complete and unit-tested
-(`src/lib/auth/context.test.ts`) without needing a live project. What's still
-required before staff/client sign-in actually works in production:
+**V1 authentication is Supabase email + password.** An earlier design
+targeted Google OAuth as the sign-in mechanism; it was never actually
+configured for any real environment (no Google Cloud client, no Supabase
+provider settings — the old text below described what OAuth setup *would*
+require, not something completed) and has since been **removed from the
+codebase entirely**, not merely deferred behind a flag — there is no
+`/auth/google` or `/auth/callback` route, and no `signInWithOAuth` call
+anywhere in `src/`. This was found and corrected during final UAT: the
+sign-in page rendered only a non-functional "Continue with Google" button,
+meaning no one could sign in through the browser UI in any environment.
 
-1. In Supabase Auth URL configuration, set Site URL to
-   `https://debtor.nklodha.in` and allow the exact app callback
-   `https://debtor.nklodha.in/auth/callback`.
-2. In Google Cloud, create a Web application OAuth client. Its authorized
-   redirect URI is `https://<project-ref>.supabase.co/auth/v1/callback`
-   (copy the exact value from Supabase), **not the app callback above**.
-   Configure only the OpenID, email and profile scopes required for sign-in.
-   Put the Google client ID/secret in Supabase's Google provider settings,
-   never in app public environment variables.
-3. Code now implements the sign-in POST and PKCE callback exchange. Set
-   `NEXT_PUBLIC_APP_URL` to the trusted HTTPS app origin. Sign-in rejects
-   cross-origin POSTs; callbacks ignore forwarded host headers and reject
-   external return destinations. Unprovisioned identities are signed out;
-   clients land at `/client`, staff/admin at `/dashboard`. Google configuration
-   and a real browser sign-in still require live verification.
-4. Provision real `app_users` / `user_organisations` rows for every staff
-   member and client contact (there is no self-serve signup flow by design —
-   PRD access model).
-5. Once (1)-(4) exist, set `NODE_ENV=production` and confirm: an
-   unauthenticated request to any internal/client route redirects to
-   `/sign-in` (enforced today by `src/proxy.ts`), and a signed-in client
-   only ever sees their own organisation's data (enforced by RLS + 
-   `src/lib/auth/session.ts#resolveClientOrganisationId`).
+Live-verified end-to-end during that UAT (real production Supabase project,
+`igagfxgzlojqrkaawnzx`): a throwaway admin, staff, and client identity each
+signed in via `src/app/actions/auth.ts#signInAction`
+(`supabase.auth.signInWithPassword`), landed on the correct surface
+(`/dashboard` for staff/admin, `/client` for client), and sign-out
+(`signOutAction`) genuinely cleared the session (re-visiting `/dashboard`
+afterward redirected back to `/sign-in`). Invalid credentials and an
+unprovisioned identity both produce the same generic
+"Invalid email or password." — no account-existence disclosure.
+
+What's required to make a real staff/client identity usable in production:
+
+1. Create the person's Supabase Auth identity (Dashboard → Authentication →
+   Users → **Add user**, with **Auto Confirm User** checked — there is no
+   self-serve signup flow by design, PRD access model) with a password they
+   choose or a reset link you send them separately.
+2. Provision matching `app_users` / `user_organisations` rows — see
+   `docs/ADMIN_BOOTSTRAP.md` for the exact SQL Editor procedure (the only
+   sanctioned way to write those tables; no ordinary authenticated session,
+   staff or admin, can write them itself).
+3. Confirm: an unauthenticated request to any internal/client route
+   redirects to `/sign-in` (enforced by `src/proxy.ts`), and a signed-in
+   client only ever sees their own organisation's data (enforced by RLS +
+   `src/lib/auth/session.ts#resolveClientOrganisationId`) — both verified
+   live during the same UAT pass.
+
+`NEXT_PUBLIC_APP_URL` is no longer read by the application (it was only
+ever used to build the OAuth redirect origin) — safe to leave set or unset;
+not required for sign-in to function.
 
 ## 4. Build & run
 

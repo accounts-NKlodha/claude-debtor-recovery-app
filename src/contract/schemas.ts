@@ -54,10 +54,19 @@ export const flexibleDate = z
     return z.NEVER;
   });
 
+/** An optional date field left blank in a form submits "" -- treat that as
+ * absent rather than failing flexibleDate's format check (same class of bug
+ * as optionalGstinSchema above; found via live testing during final UAT --
+ * this exact field blocked creating a case with no due date at all). */
+const optionalFlexibleDate = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  flexibleDate.nullable().optional(),
+);
+
 export const manualInvoiceSchema = z.object({
   invoiceNumber: z.string().min(1),
   invoiceDate: flexibleDate,
-  dueDate: flexibleDate.nullable().optional(),
+  dueDate: optionalFlexibleDate,
   taxableValue: moneyToPaise,
   taxRate: z.coerce.number().min(0).max(100),
   taxAmount: moneyToPaise,

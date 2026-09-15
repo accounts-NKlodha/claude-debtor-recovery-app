@@ -98,8 +98,10 @@ export function NewClientForm() {
       <CardHeader>
         <CardTitle>Client details</CardTitle>
         <CardDescription>
-          Creates the client organisation record. Staff Google sign-in / client OTP still need to be
-          wired before a client user can sign in to it (see the Audit page for open items).
+          Creates the client organisation record. A client user still needs a provisioned Supabase
+          Auth identity + <span className="font-mono text-xs">app_users</span>/
+          <span className="font-mono text-xs">user_organisations</span> rows before they can sign in
+          to it (see docs/ADMIN_BOOTSTRAP.md).
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-0">
