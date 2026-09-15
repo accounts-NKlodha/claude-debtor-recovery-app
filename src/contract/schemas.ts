@@ -21,6 +21,37 @@ export const indianMobileSchema = z
   .transform((s) => s.replace(/[\s-]/g, ""))
   .pipe(z.string().regex(/^(\+?91)?[6-9]\d{9}$/, "invalid Indian mobile"));
 
+/** A debtor contact field (email/mobile) left blank in a form submits "" --
+ * treat that as absent rather than failing format validation (same class
+ * of bug as optionalGstinSchema/optionalFlexibleDate above). Core-workflow
+ * remediation task: debtor email/mobile are always optional at the point
+ * of data entry -- a case may be created or have its contact corrected
+ * with either, both, or neither present. */
+export const optionalEmailSchema = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email("invalid email")
+    .nullable()
+    .optional(),
+);
+export const optionalMobileSchema = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  indianMobileSchema.nullable().optional(),
+);
+
+/** Editing a debtor's email/mobile (case detail -> "Edit contact details",
+ * staff/admin only). At least one channel need not be present -- a case
+ * without contact info is allowed to exist; this schema only governs what
+ * gets *saved* when staff supplies a value. */
+export const debtorContactSchema = z.object({
+  email: optionalEmailSchema,
+  mobile: optionalMobileSchema,
+});
+export type DebtorContactInput = z.infer<typeof debtorContactSchema>;
+
 /** money entered by humans: "1,23,456.78" | "123456" | "-500" -> paise int */
 export const moneyToPaise = z
   .string()
@@ -74,6 +105,8 @@ export const manualInvoiceSchema = z.object({
   outstandingBalance: moneyToPaise,
   debtorName: z.string().min(1),
   debtorGstin: optionalGstinSchema,
+  debtorEmail: optionalEmailSchema,
+  debtorMobile: optionalMobileSchema,
 });
 export type ManualInvoiceInput = z.infer<typeof manualInvoiceSchema>;
 

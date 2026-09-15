@@ -101,6 +101,20 @@ export interface Repository {
     actor: MutationActor,
   ): Promise<CreateOrganisationResult>;
   getDebtor(id: string): Promise<Debtor | undefined>;
+  /**
+   * Full-replace update of a debtor's mobile/email (core-workflow
+   * remediation task: final UAT found no mechanism anywhere to capture or
+   * correct debtor contact info, which blocked the reminder-send workflow
+   * for any case created through the product's own intake paths).
+   * Staff/admin only -- client must never modify debtor contact
+   * information. `reason` is required and audited (`debtor.contact_updated`).
+   */
+  updateDebtorContact(
+    debtorId: string,
+    input: import("@/contract/schemas").DebtorContactInput,
+    reason: string,
+    actor: MutationActor,
+  ): Promise<Debtor>;
   assigneeName(id: string | null): Promise<string>;
 
   // -- cases ----------------------------------------------------------------

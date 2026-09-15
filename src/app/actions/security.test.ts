@@ -44,37 +44,67 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+function paymentFormData(fields: {
+  caseId: string;
+  kind: string;
+  amount: number;
+  reference?: string | null;
+  clientConfirmed?: boolean;
+}): FormData {
+  const fd = new FormData();
+  fd.set("caseId", fields.caseId);
+  fd.set("kind", fields.kind);
+  fd.set("amount", String(fields.amount));
+  fd.set("reference", fields.reference ?? "");
+  fd.set("clientConfirmed", String(fields.clientConfirmed ?? false));
+  return fd;
+}
+
+function confirmFormData(paymentId: string, caseId: string): FormData {
+  const fd = new FormData();
+  fd.set("paymentId", paymentId);
+  fd.set("caseId", caseId);
+  return fd;
+}
+
 describe("recordPaymentAction / confirmPaymentAction (real entry points)", () => {
-  it("rejects an unauthenticated mutation before touching the repository", async () => {
+  it("returns a generic error state (never throws) with no session, and never records a payment", async () => {
     authorizeStaffMutation.mockRejectedValue(new UnauthenticatedError());
     const { recordPaymentAction } = await import("./payments");
     const before = mock.PAYMENTS.length;
 
-    await expect(
-      recordPaymentAction({
-        caseId: mock.CASES[0].id,
-        kind: "bank",
-        amount: 1000,
-        reference: null,
-        clientConfirmed: false,
-      }),
-    ).rejects.toThrow(UnauthenticatedError);
+    const result = await recordPaymentAction(
+      { payment: null, error: null },
+      paymentFormData({ caseId: mock.CASES[0].id, kind: "bank", amount: 1000 }),
+    );
+    expect(result.error).toBeTruthy();
+    expect(result.payment).toBeNull();
     expect(mock.PAYMENTS.length).toBe(before); // no side effect happened
   });
 
-  it("rejects a wrong actor type (e.g. a client session hitting a staff-only action)", async () => {
+  it("rejects a wrong actor type (e.g. a client session hitting a staff-only action) as state, not a throw", async () => {
     authorizeStaffMutation.mockRejectedValue(new ForbiddenError("Staff/admin session required"));
     const { recordPaymentAction } = await import("./payments");
 
-    await expect(
-      recordPaymentAction({
-        caseId: mock.CASES[0].id,
-        kind: "bank",
-        amount: 1000,
-        reference: null,
-        clientConfirmed: false,
-      }),
-    ).rejects.toThrow(ForbiddenError);
+    const result = await recordPaymentAction(
+      { payment: null, error: null },
+      paymentFormData({ caseId: mock.CASES[0].id, kind: "bank", amount: 1000 }),
+    );
+    expect(result.error).toBeTruthy();
+    expect(result.payment).toBeNull();
+  });
+
+  it("rejects an unselected case (the old case-1 fallback path) without ever calling the repository", async () => {
+    const { recordPaymentAction } = await import("./payments");
+    const before = mock.PAYMENTS.length;
+
+    const result = await recordPaymentAction(
+      { payment: null, error: null },
+      paymentFormData({ caseId: "", kind: "bank", amount: 1000 }),
+    );
+    expect(result.error).toBe("Select an organisation and case before recording a receipt.");
+    expect(mock.PAYMENTS.length).toBe(before);
+    expect(authorizeStaffMutation).not.toHaveBeenCalled();
   });
 
   it("attributes the audit entry to the authenticated actor, never a value the caller supplied -- and never a constant", async () => {
@@ -82,7 +112,10 @@ describe("recordPaymentAction / confirmPaymentAction (real entry points)", () =>
     const caseId = mock.CASES.find((c) => c.status === "active")?.id ?? mock.CASES[0].id;
 
     authorizeStaffMutation.mockResolvedValue(STAFF_A);
-    await recordPaymentAction({ caseId, kind: "bank", amount: 500, reference: "r1", clientConfirmed: false });
+    await recordPaymentAction(
+      { payment: null, error: null },
+      paymentFormData({ caseId, kind: "bank", amount: 500, reference: "r1" }),
+    );
     let audit = await latestAudit();
     expect(audit.action).toBe("payment.recorded");
     expect(audit.actorId).toBe(STAFF_A.actorId);
@@ -92,7 +125,10 @@ describe("recordPaymentAction / confirmPaymentAction (real entry points)", () =>
     // the session, proving it isn't hardcoded and (since `input` has no
     // actor-shaped field at all) cannot be forged from the request payload.
     authorizeStaffMutation.mockResolvedValue(STAFF_B);
-    await recordPaymentAction({ caseId, kind: "bank", amount: 500, reference: "r2", clientConfirmed: false });
+    await recordPaymentAction(
+      { payment: null, error: null },
+      paymentFormData({ caseId, kind: "bank", amount: 500, reference: "r2" }),
+    );
     audit = await latestAudit();
     expect(audit.actorId).toBe(STAFF_B.actorId);
     expect(audit.actorId).not.toBe(STAFF_A.actorId);
@@ -103,22 +139,38 @@ describe("recordPaymentAction / confirmPaymentAction (real entry points)", () =>
     const caseId = mock.CASES.find((c) => c.status === "active")?.id ?? mock.CASES[0].id;
 
     authorizeStaffMutation.mockResolvedValue(STAFF_A);
-    const { payment } = await recordPaymentAction({
-      caseId,
-      kind: "bank",
-      amount: 750,
-      reference: "confirm-me",
-      clientConfirmed: false,
-    });
+    const { payment } = await recordPaymentAction(
+      { payment: null, error: null },
+      paymentFormData({ caseId, kind: "bank", amount: 750, reference: "confirm-me" }),
+    );
 
     authorizeStaffMutation.mockRejectedValueOnce(new UnauthenticatedError());
-    await expect(confirmPaymentAction(payment.id, caseId)).rejects.toThrow(UnauthenticatedError);
+    const rejected = await confirmPaymentAction({ confirmed: false, error: null }, confirmFormData(payment!.id, caseId));
+    expect(rejected.confirmed).toBe(false);
+    expect(rejected.error).toBeTruthy();
 
     authorizeStaffMutation.mockResolvedValue(STAFF_B);
-    await confirmPaymentAction(payment.id, caseId);
+    const ok = await confirmPaymentAction({ confirmed: false, error: null }, confirmFormData(payment!.id, caseId));
+    expect(ok.confirmed).toBe(true);
     const audit = await latestAudit();
     expect(audit.action).toBe("payment.confirmed");
     expect(audit.actorId).toBe(STAFF_B.actorId);
+  });
+
+  it("confirming an already-confirmed payment returns an error as state, not a throw (real business-rule rejection)", async () => {
+    const { recordPaymentAction, confirmPaymentAction } = await import("./payments");
+    const caseId = mock.CASES.find((c) => c.status === "active")?.id ?? mock.CASES[0].id;
+
+    authorizeStaffMutation.mockResolvedValue(STAFF_A);
+    const { payment } = await recordPaymentAction(
+      { payment: null, error: null },
+      paymentFormData({ caseId, kind: "bank", amount: 250, reference: "double-confirm-me" }),
+    );
+    await confirmPaymentAction({ confirmed: false, error: null }, confirmFormData(payment!.id, caseId));
+
+    const second = await confirmPaymentAction({ confirmed: false, error: null }, confirmFormData(payment!.id, caseId));
+    expect(second.confirmed).toBe(false);
+    expect(second.error).toBeTruthy();
   });
 });
 
@@ -128,6 +180,146 @@ function automationFormData(nextEnabled: boolean, reason: string): FormData {
   fd.set("reason", reason);
   return fd;
 }
+
+function debtorContactFormData(debtorId: string, caseId: string, email: string, mobile: string, reason = ""): FormData {
+  const fd = new FormData();
+  fd.set("debtorId", debtorId);
+  fd.set("caseId", caseId);
+  fd.set("email", email);
+  fd.set("mobile", mobile);
+  fd.set("reason", reason);
+  return fd;
+}
+
+describe("updateDebtorContactAction (real entry point, core-workflow remediation)", () => {
+  it("staff can update a debtor's contact details", async () => {
+    authorizeStaffMutation.mockResolvedValue(STAFF_A);
+    const { updateDebtorContactAction } = await import("./debtor");
+
+    const result = await updateDebtorContactAction(
+      { debtor: null, error: null },
+      debtorContactFormData("deb-1", "case-1", "new-email@example.com", ""),
+    );
+    expect(result.error).toBeNull();
+    expect(result.debtor?.email).toBe("new-email@example.com");
+    expect(mock.getDebtor("deb-1")?.email).toBe("new-email@example.com");
+  });
+
+  it("admin can also update a debtor's contact details (operational staff functionality, existing role model)", async () => {
+    authorizeStaffMutation.mockResolvedValue(STAFF_B); // STAFF_B is an admin actor
+    const { updateDebtorContactAction } = await import("./debtor");
+
+    const result = await updateDebtorContactAction(
+      { debtor: null, error: null },
+      debtorContactFormData("deb-1", "case-1", "admin-set@example.com", ""),
+    );
+    expect(result.error).toBeNull();
+    expect(result.debtor?.email).toBe("admin-set@example.com");
+  });
+
+  it("client is denied -- authorizeStaffMutation rejects, returned as safe state, not a throw or a mutation", async () => {
+    authorizeStaffMutation.mockRejectedValue(new ForbiddenError("Staff/admin session required"));
+    const { updateDebtorContactAction } = await import("./debtor");
+    const before = mock.getDebtor("deb-1")?.email;
+
+    const result = await updateDebtorContactAction(
+      { debtor: null, error: null },
+      debtorContactFormData("deb-1", "case-1", "client-attempt@example.com", ""),
+    );
+    expect(result.error).toBe("You do not have permission to change this debtor's contact details.");
+    expect(result.debtor).toBeNull();
+    expect(mock.getDebtor("deb-1")?.email).toBe(before); // no side effect
+  });
+
+  it("anon (unauthenticated) is denied the same way", async () => {
+    authorizeStaffMutation.mockRejectedValue(new UnauthenticatedError());
+    const { updateDebtorContactAction } = await import("./debtor");
+
+    const result = await updateDebtorContactAction(
+      { debtor: null, error: null },
+      debtorContactFormData("deb-1", "case-1", "anon-attempt@example.com", ""),
+    );
+    expect(result.error).toBeTruthy();
+    expect(result.debtor).toBeNull();
+  });
+
+  it("a nonexistent debtor id is rejected cleanly -- never silently mutates an unrelated row", async () => {
+    authorizeStaffMutation.mockResolvedValue(STAFF_A);
+    const { updateDebtorContactAction } = await import("./debtor");
+
+    const result = await updateDebtorContactAction(
+      { debtor: null, error: null },
+      debtorContactFormData("deb-does-not-exist", "case-1", "x@example.com", ""),
+    );
+    expect(result.error).toBeTruthy();
+    expect(result.debtor).toBeNull();
+  });
+
+  it("an invalid email is rejected client-side (schema), never reaching the repository", async () => {
+    authorizeStaffMutation.mockResolvedValue(STAFF_A);
+    const { updateDebtorContactAction } = await import("./debtor");
+    const before = mock.getDebtor("deb-1")?.email;
+
+    const result = await updateDebtorContactAction(
+      { debtor: null, error: null },
+      debtorContactFormData("deb-1", "case-1", "not-an-email", ""),
+    );
+    expect(result.error).toBeTruthy();
+    expect(result.debtor).toBeNull();
+    expect(mock.getDebtor("deb-1")?.email).toBe(before);
+    expect(authorizeStaffMutation).not.toHaveBeenCalled();
+  });
+
+  it("an invalid Indian mobile number is rejected the same way", async () => {
+    authorizeStaffMutation.mockResolvedValue(STAFF_A);
+    const { updateDebtorContactAction } = await import("./debtor");
+
+    const result = await updateDebtorContactAction(
+      { debtor: null, error: null },
+      debtorContactFormData("deb-1", "case-1", "", "12345"),
+    );
+    expect(result.error).toBeTruthy();
+    expect(result.debtor).toBeNull();
+  });
+
+  it("both fields may be blank -- clearing contact info is allowed, not treated as invalid", async () => {
+    authorizeStaffMutation.mockResolvedValue(STAFF_A);
+    const { updateDebtorContactAction } = await import("./debtor");
+
+    const result = await updateDebtorContactAction(
+      { debtor: null, error: null },
+      debtorContactFormData("deb-1", "case-1", "", ""),
+    );
+    expect(result.error).toBeNull();
+    expect(result.debtor).toEqual({ email: null, mobile: null });
+  });
+
+  it("generates an audit event, attributed to the real session actor", async () => {
+    authorizeStaffMutation.mockResolvedValue(STAFF_A);
+    const { updateDebtorContactAction } = await import("./debtor");
+
+    await updateDebtorContactAction(
+      { debtor: null, error: null },
+      debtorContactFormData("deb-1", "case-1", "audited@example.com", ""),
+    );
+    const audit = await latestAudit();
+    expect(audit.action).toBe("debtor.contact_updated");
+    expect(audit.actorId).toBe(STAFF_A.actorId);
+  });
+
+  it("the audit reason does not duplicate the full email/mobile PII (change-indicator style, not raw values)", async () => {
+    authorizeStaffMutation.mockResolvedValue(STAFF_A);
+    const { updateDebtorContactAction } = await import("./debtor");
+    const secretLookingEmail = "should-not-appear-verbatim@example.com";
+
+    await updateDebtorContactAction(
+      { debtor: null, error: null },
+      debtorContactFormData("deb-1", "case-1", secretLookingEmail, ""),
+    );
+    const audit = await latestAudit();
+    expect(audit.reason ?? "").not.toContain(secretLookingEmail);
+  });
+});
 
 describe("setAutomationStateAction: admin-only privileged path (real entry point)", () => {
   it("cannot be reached through an ordinary staff authorization -- it calls authorizeAdminMutation, not authorizeStaffMutation", async () => {

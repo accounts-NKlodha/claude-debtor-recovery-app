@@ -5,7 +5,7 @@
  * - Never partially activate: returns a preview + errors; the caller commits.
  */
 
-import { BULK_IMPORT_COLUMNS } from "@/contract/schemas";
+import { BULK_IMPORT_COLUMNS, optionalEmailSchema, optionalMobileSchema } from "@/contract/schemas";
 import type { ImportResult, ImportRowError } from "@/contract/types";
 
 const REQUIRED = new Set([
@@ -148,6 +148,14 @@ export function validateImport(csvText: string, opts: ImportOptions = {}): Impor
     const taxRate = cell("tax_rate");
     if (taxRate && !/^\d+(\.\d+)?$/.test(taxRate))
       rowErr("tax_rate", "bad_number", `Unparseable tax rate "${taxRate}"`);
+
+    // Both optional -- a blank cell is fine (core-workflow remediation
+    // task), but a *supplied* value must be well-formed; never fabricated
+    // or silently dropped if malformed.
+    if (cell("debtor_email") && !optionalEmailSchema.safeParse(cell("debtor_email")).success)
+      rowErr("debtor_email", "bad_email", `Invalid email "${cell("debtor_email")}"`);
+    if (cell("debtor_mobile") && !optionalMobileSchema.safeParse(cell("debtor_mobile")).success)
+      rowErr("debtor_mobile", "bad_mobile", `Invalid Indian mobile number "${cell("debtor_mobile")}"`);
 
     const dupKey = `${(cell("debtor_gstin") || cell("debtor_name")).toLowerCase()}::${cell(
       "invoice_number",

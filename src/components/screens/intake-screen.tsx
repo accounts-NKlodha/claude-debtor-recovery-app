@@ -153,6 +153,17 @@ function ManualInvoiceForm({ organisationId }: { organisationId: string }) {
       <Field id="mi-debtorName" label="Debtor name" error={err("debtorName")}>
         <Input id="mi-debtorName" {...register("debtorName")} />
       </Field>
+      <Field id="mi-debtorEmail" label="Debtor email (optional)" error={err("debtorEmail")}>
+        <Input id="mi-debtorEmail" type="email" placeholder="debtor@example.com" {...register("debtorEmail")} />
+      </Field>
+      <Field id="mi-debtorMobile" label="Debtor mobile (optional)" error={err("debtorMobile")}>
+        <Input id="mi-debtorMobile" placeholder="+91 98765 43210" {...register("debtorMobile")} />
+      </Field>
+      <p className="col-span-full -mt-2 text-xs text-muted-foreground">
+        Email is required for an automated reminder (Gmail is the only production delivery channel;
+        WhatsApp is not enabled). A case can still be created without either -- contact details can be
+        added later from the case page.
+      </p>
       <Field id="mi-invoiceDate" label="Invoice date (DD/MM/YYYY)" error={err("invoiceDate")}>
         <Input id="mi-invoiceDate" placeholder="14/06/2026" {...register("invoiceDate")} />
       </Field>

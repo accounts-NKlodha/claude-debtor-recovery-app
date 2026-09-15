@@ -43,7 +43,12 @@ import { parseCsv, parseDate, parseMoney, validateImport } from "@/domain/bulk-i
 import { runAdapter } from "@/orchestrator/run-adapter";
 import { getAdapters } from "@/adapters";
 import { isProductionRuntime } from "@/lib/config/production";
-import { gstComposeSchema, type GstComposeInput, type ManualInvoiceInput } from "@/contract/schemas";
+import {
+  gstComposeSchema,
+  type DebtorContactInput,
+  type GstComposeInput,
+  type ManualInvoiceInput,
+} from "@/contract/schemas";
 import type { MsmeStage } from "@/contract/adapters";
 import type {
   AuditEventRow,
@@ -753,6 +758,8 @@ export class SupabaseRepository implements Repository {
         p_debtor: {
           name: input.debtorName,
           gstin: input.debtorGstin ?? null,
+          email: input.debtorEmail ?? null,
+          mobile: input.debtorMobile ?? null,
           outstandingBalance: input.outstandingBalance,
         },
         p_case: {
@@ -784,6 +791,30 @@ export class SupabaseRepository implements Repository {
       invoice: toInvoice(result.invoice),
       debtor: toDebtor(result.debtor),
     };
+  }
+
+  /**
+   * Full-replace update of a debtor's mobile/email (case detail -> "Edit
+   * contact details"). Staff/admin only, enforced inside update_debtor_
+   * contact (0020_debtor_contact_update.sql) -- debtors is staff-read-only
+   * via RLS since 0011_close_direct_write_bypass.sql, so this RPC is the
+   * only way to change it; there is no direct-table-write fallback.
+   */
+  async updateDebtorContact(
+    debtorId: string,
+    input: DebtorContactInput,
+    reason: string,
+    actor: MutationActor,
+  ): Promise<Debtor> {
+    const supabase = await this.db();
+    const result = await callWriteRpc<DebtorRow>(supabase, "update_debtor_contact", {
+      p_debtor_id: debtorId,
+      p_email: input.email ?? null,
+      p_mobile: input.mobile ?? null,
+      p_reason: reason,
+      p_expected_actor_id: actor.actorId,
+    });
+    return toDebtor(result);
   }
 
   async validateBulkImport(csvText: string): Promise<ImportResult> {
@@ -841,6 +872,11 @@ export class SupabaseRepository implements Repository {
         {
           debtorName: cell("debtor_name"),
           debtorGstin: cell("debtor_gstin") || null,
+          // Both optional -- validated per-row by validateBulkImport/
+          // domain/bulk-import.ts before this ever runs; a blank cell is
+          // simply absent, never fabricated (core-workflow remediation task).
+          debtorEmail: cell("debtor_email") || null,
+          debtorMobile: cell("debtor_mobile") || null,
           invoiceNumber: cell("invoice_number"),
           invoiceDate,
           dueDate,

@@ -284,4 +284,13 @@ export const RPC_MANIFEST: RpcManifestEntry[] = [
     introducedIn: "0018_email_delivery.sql",
     notes: "Persists the definitive attempt outcome, updates the communication + case state, audits; idempotent once already completed.",
   },
+  {
+    name: "update_debtor_contact",
+    classification: "public_rpc",
+    expectedAnonExecute: false,
+    expectedAuthenticatedExecute: true,
+    requiredAppRole: "staff",
+    introducedIn: "0020_debtor_contact_update.sql",
+    notes: "Full-replace update of debtors.email/mobile; client must never reach this (staff/admin only, checked inside the function).",
+  },
 ];

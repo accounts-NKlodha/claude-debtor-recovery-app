@@ -32,6 +32,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { LinkButton } from "@/components/ui/link-button";
 import { SpotlightCard } from "@/components/ui/spotlight-card";
 import { SendReminderButton } from "./send-reminder-button";
+import { DebtorContactPanel } from "./debtor-contact-panel";
 import { DdHearingActions } from "./dd-hearing-actions";
 import { OcrReviewPanel } from "./ocr-review-panel";
 import { ResolveTaskButton } from "./resolve-task-button";
@@ -40,9 +41,12 @@ import { DebtorReplyForm } from "./debtor-reply-form";
 export interface CaseDetailVM {
   kase: RecoveryCase;
   clientName: string;
+  debtorId: string;
   debtorName: string;
   debtorGstin: string | null;
   debtorAddress: string | null;
+  debtorEmail: string | null;
+  debtorMobile: string | null;
   assignee: string;
   invoices: Invoice[];
   communications: Communication[];
@@ -110,7 +114,17 @@ export function CaseDetail({ vm }: { vm: CaseDetailVM }) {
               </span>
             </div>
           ) : null}
-          {kase.status === "active" ? <SendReminderButton caseId={kase.id} /> : null}
+          {kase.status === "active" ? (
+            <div className="flex flex-col gap-2">
+              <DebtorContactPanel
+                debtorId={vm.debtorId}
+                caseId={kase.id}
+                email={vm.debtorEmail}
+                mobile={vm.debtorMobile}
+              />
+              <SendReminderButton caseId={kase.id} />
+            </div>
+          ) : null}
           <DdHearingActions caseId={kase.id} status={kase.status} ddRecord={vm.ddRecord} hearings={vm.hearings} />
         </div>
 

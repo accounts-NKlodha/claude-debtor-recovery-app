@@ -31,9 +31,12 @@ export default async function CaseDetailPage({
   const vm: CaseDetailVM = {
     kase,
     clientName: org?.legalEntityName ?? "—",
+    debtorId: kase.debtorId,
     debtorName: debtor?.name ?? "—",
     debtorGstin: debtor?.gstin ?? null,
     debtorAddress: debtor?.address ?? null,
+    debtorEmail: debtor?.email ?? null,
+    debtorMobile: debtor?.mobile ?? null,
     assignee: await repo.assigneeName(kase.assigneeId),
     invoices,
     communications,

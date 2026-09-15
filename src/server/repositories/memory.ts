@@ -30,7 +30,12 @@ import { createDraftCase, type IntakeInvoiceInput } from "@/domain/intake";
 import { parseCsv, parseDate, parseMoney, validateImport } from "@/domain/bulk-import";
 import { runAdapter } from "@/orchestrator/run-adapter";
 import { getAdapters } from "@/adapters";
-import { gstComposeSchema, type GstComposeInput, type ManualInvoiceInput } from "@/contract/schemas";
+import {
+  gstComposeSchema,
+  type DebtorContactInput,
+  type GstComposeInput,
+  type ManualInvoiceInput,
+} from "@/contract/schemas";
 import type { MsmeStage } from "@/contract/adapters";
 import type { Channel, ReplyClassification } from "@/contract/enums";
 import type { Communication, Invoice, PaymentRecord, RecoveryCase } from "@/contract/types";
@@ -209,12 +214,21 @@ export class MemoryRepository implements Repository {
         id: `deb-${nanoid(8)}`,
         organisationId,
         name: input.debtorName,
-        mobile: null,
-        email: null,
+        mobile: input.debtorMobile ?? null,
+        email: input.debtorEmail ?? null,
         gstin: input.debtorGstin ?? null,
         address: null,
         contactVerified: false,
         totalDue: input.outstandingBalance,
+      });
+    } else if ((input.debtorMobile && !debtor.mobile) || (input.debtorEmail && !debtor.email)) {
+      // Populate only whichever contact field is currently missing on the
+      // matched existing debtor -- never overwrite an already-set value
+      // (mirrors create_case_from_invoice's Supabase behavior,
+      // 0020_debtor_contact_update.sql).
+      debtor = mock.mutateDebtor(debtor.id, {
+        mobile: debtor.mobile ?? input.debtorMobile ?? null,
+        email: debtor.email ?? input.debtorEmail ?? null,
       });
     }
 
@@ -284,6 +298,31 @@ export class MemoryRepository implements Repository {
     });
 
     return tick({ case: kase, invoice, debtor });
+  }
+
+  async updateDebtorContact(
+    debtorId: string,
+    input: DebtorContactInput,
+    reason: string,
+    actor: MutationActor,
+  ) {
+    const before = mock.getDebtor(debtorId);
+    if (!before) throw new Error(`updateDebtorContact: debtor ${debtorId} not found`);
+    const emailChanged = before.email !== (input.email ?? null);
+    const mobileChanged = before.mobile !== (input.mobile ?? null);
+    const updated = mock.mutateDebtor(debtorId, {
+      email: input.email ?? null,
+      mobile: input.mobile ?? null,
+    });
+    mock.appendAudit({
+      action: "debtor.contact_updated",
+      entity: "debtor",
+      entityId: debtorId,
+      reason: `${reason} (email changed: ${emailChanged}, mobile changed: ${mobileChanged})`,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
+    });
+    return tick(updated);
   }
 
   async validateBulkImport(csvText: string) {

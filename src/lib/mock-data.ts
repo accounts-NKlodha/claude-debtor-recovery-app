@@ -1526,6 +1526,18 @@ export function insertDebtor(debtor: Debtor) {
   return debtor;
 }
 
+/** Patches an existing debtor row in place (by id) -- unlike insertDebtor,
+ * which always appends. Used for genuine updates (contact-info backfill at
+ * intake, the "Edit contact details" action) where a second row with the
+ * same id would be a real bug, not just a demo-mode quirk. Matches
+ * mutateCase/mutateInvoice's existing shape. */
+export function mutateDebtor(id: string, patch: Partial<Debtor>) {
+  const idx = DEBTORS.findIndex((d) => d.id === id);
+  if (idx === -1) throw new Error(`mutateDebtor: debtor ${id} not found`);
+  DEBTORS[idx] = { ...DEBTORS[idx], ...patch };
+  return DEBTORS[idx];
+}
+
 export function findOrgByClientCode(clientCode: string) {
   const needle = clientCode.trim().toLowerCase();
   return ORGANISATIONS.find((o) => o.clientCode.trim().toLowerCase() === needle);
