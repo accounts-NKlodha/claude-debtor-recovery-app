@@ -120,6 +120,7 @@ export function AppShell({
   surface,
   organisations,
   counts,
+  user,
   children,
 }: {
   surface: Surface;
@@ -128,6 +129,11 @@ export function AppShell({
   organisations: Organisation[];
   /** nav-item href -> badge count, computed server-side in the layout. */
   counts?: Partial<Record<string, number>>;
+  /** The real, server-resolved signed-in identity (authorization hardening
+   * task) -- never a browser-supplied value. Both (internal)/layout.tsx and
+   * (client)/layout.tsx derive this from getAuthContext(), the same
+   * trusted source every server action uses for attribution. */
+  user: { displayName: string; email: string | null; role: string };
   children: React.ReactNode;
 }) {
   const items = surface === "internal" ? INTERNAL_NAV : CLIENT_NAV;
@@ -208,9 +214,12 @@ export function AppShell({
         <div className="ml-auto flex items-center gap-1 sm:ml-2">
           <ThemeToggle />
           <DropdownMenu
-            trigger={<Avatar name="Priya Sharma" />}
+            trigger={<Avatar name={user.displayName} />}
           >
-            <DropdownMenuLabel>Priya Sharma</DropdownMenuLabel>
+            <DropdownMenuLabel>
+              {user.displayName}
+              {user.email ? <span className="block truncate text-[11px] font-normal text-muted-foreground">{user.email}</span> : null}
+            </DropdownMenuLabel>
             <DropdownMenuItem>Profile</DropdownMenuItem>
             <DropdownMenuItem>Preferences</DropdownMenuItem>
             <DropdownMenuSeparator />

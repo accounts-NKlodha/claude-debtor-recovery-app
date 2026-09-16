@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { useActionState } from "react";
+import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { FileClock, CalendarPlus, CircleAlert, CheckCircle2, CalendarClock } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,41 +16,56 @@ import {
   recordHearingOutcomeAction,
   rescheduleHearingAction,
   scheduleHearingAction,
+  type PrepareDdTaskState,
+  type RecordDdSubmittedState,
+  type RecordHearingOutcomeState,
+  type RescheduleHearingState,
+  type ScheduleHearingState,
 } from "@/app/actions/hearing";
 import type { CaseStatus } from "@/contract/enums";
 import type { CaseHearing, DdRecord } from "@/contract/types";
+
+const PREPARE_DD_IDLE: PrepareDdTaskState = { result: null, error: null };
+const RECORD_DD_SUBMITTED_IDLE: RecordDdSubmittedState = { result: null, error: null };
+const SCHEDULE_HEARING_IDLE: ScheduleHearingState = { result: null, error: null };
+const RESCHEDULE_HEARING_IDLE: RescheduleHearingState = { result: null, error: null };
+const RECORD_OUTCOME_IDLE: RecordHearingOutcomeState = { result: null, error: null };
 
 function fmtDate(s: string | null) {
   if (!s) return "—";
   return new Date(s).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
 }
 
+function SubmitButton({ children, variant }: { children: React.ReactNode; variant?: "outline" }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button size="sm" type="submit" variant={variant} disabled={pending}>
+      {children}
+    </Button>
+  );
+}
+
 function DdPanel({ caseId, ddRecord }: { caseId: string; ddRecord: DdRecord | undefined }) {
   const router = useRouter();
-  const [pending, setPending] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const [amount, setAmount] = React.useState(ddRecord?.amount ? String(ddRecord.amount / 100) : "1000");
-  const [payee, setPayee] = React.useState(ddRecord?.payee ?? "MSEFC");
-  const [reference, setReference] = React.useState(ddRecord?.reference ?? "");
+  const [prepareState, prepareAction] = useActionState<PrepareDdTaskState, FormData>(
+    prepareDdTaskAction,
+    PREPARE_DD_IDLE,
+  );
+  const [submitState, submitAction] = useActionState<RecordDdSubmittedState, FormData>(
+    recordDdSubmittedAction,
+    RECORD_DD_SUBMITTED_IDLE,
+  );
+  const lastResultRef = React.useRef<unknown>(null);
 
-  const prepare = () => {
-    setPending(true);
-    setError(null);
-    const paise = Math.round(Number(amount) * 100);
-    prepareDdTaskAction(caseId, { amount: Number.isFinite(paise) ? paise : null, payee, reference: reference || null })
-      .then(() => router.refresh())
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to prepare DD"))
-      .finally(() => setPending(false));
-  };
+  React.useEffect(() => {
+    const latest = submitState.result ?? prepareState.result;
+    if (latest && latest !== lastResultRef.current) {
+      lastResultRef.current = latest;
+      router.refresh();
+    }
+  }, [prepareState.result, submitState.result, router]);
 
-  const submitDd = () => {
-    setPending(true);
-    setError(null);
-    recordDdSubmittedAction(caseId, { submittedAt: new Date().toISOString() })
-      .then(() => router.refresh())
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to record DD submitted"))
-      .finally(() => setPending(false));
-  };
+  const error = submitState.error ?? prepareState.error;
 
   return (
     <div className="flex flex-col gap-2 rounded-md border border-border p-3">
@@ -68,31 +85,36 @@ function DdPanel({ caseId, ddRecord }: { caseId: string; ddRecord: DdRecord | un
         </p>
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-2">
+          <form action={prepareAction} className="flex flex-wrap items-center gap-2">
+            <input type="hidden" name="caseId" value={caseId} />
             <Label htmlFor="dd-amount" className="text-xs">Amount (₹)</Label>
-            <Input id="dd-amount" className="h-8 w-24" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            <Input
+              id="dd-amount"
+              name="amount"
+              className="h-8 w-24"
+              defaultValue={ddRecord?.amount ? String(ddRecord.amount / 100) : "1000"}
+            />
             <Label htmlFor="dd-payee" className="text-xs">Payee</Label>
-            <Input id="dd-payee" className="h-8 w-40" value={payee} onChange={(e) => setPayee(e.target.value)} />
+            <Input id="dd-payee" name="payee" className="h-8 w-40" defaultValue={ddRecord?.payee ?? "MSEFC"} />
             <Label htmlFor="dd-ref" className="text-xs">Reference</Label>
             <Input
               id="dd-ref"
+              name="reference"
               className="h-8 w-32"
               placeholder="DD number"
-              value={reference}
-              onChange={(e) => setReference(e.target.value)}
+              defaultValue={ddRecord?.reference ?? ""}
             />
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="outline" onClick={prepare} disabled={pending}>
-              {ddRecord ? "Update DD details" : "Prepare DD task"}
-            </Button>
-            {ddRecord ? (
-              <Button size="sm" onClick={submitDd} disabled={pending}>
+            <SubmitButton variant="outline">{ddRecord ? "Update DD details" : "Prepare DD task"}</SubmitButton>
+          </form>
+          {ddRecord ? (
+            <form action={submitAction}>
+              <input type="hidden" name="caseId" value={caseId} />
+              <SubmitButton>
                 <CheckCircle2 className="h-3.5 w-3.5" />
                 Mark DD submitted
-              </Button>
-            ) : null}
-          </div>
+              </SubmitButton>
+            </form>
+          ) : null}
         </>
       )}
       {error ? (
@@ -106,41 +128,32 @@ function DdPanel({ caseId, ddRecord }: { caseId: string; ddRecord: DdRecord | un
 
 function HearingPanel({ caseId, hearings }: { caseId: string; hearings: CaseHearing[] }) {
   const router = useRouter();
-  const [pending, setPending] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const [date, setDate] = React.useState("");
   const open = hearings.find((h) => h.status === "scheduled");
   const history = hearings.filter((h) => h.id !== open?.id);
 
-  const schedule = () => {
-    if (!date) return;
-    setPending(true);
-    setError(null);
-    scheduleHearingAction(caseId, new Date(date).toISOString())
-      .then(() => router.refresh())
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to schedule hearing"))
-      .finally(() => setPending(false));
-  };
+  const [scheduleState, scheduleAction] = useActionState<ScheduleHearingState, FormData>(
+    scheduleHearingAction,
+    SCHEDULE_HEARING_IDLE,
+  );
+  const [rescheduleState, rescheduleAction] = useActionState<RescheduleHearingState, FormData>(
+    rescheduleHearingAction,
+    RESCHEDULE_HEARING_IDLE,
+  );
+  const [outcomeState, outcomeAction] = useActionState<RecordHearingOutcomeState, FormData>(
+    recordHearingOutcomeAction,
+    RECORD_OUTCOME_IDLE,
+  );
+  const lastResultRef = React.useRef<unknown>(null);
 
-  const reschedule = () => {
-    if (!date || !open) return;
-    setPending(true);
-    setError(null);
-    rescheduleHearingAction(open.id, caseId, new Date(date).toISOString())
-      .then(() => router.refresh())
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to reschedule hearing"))
-      .finally(() => setPending(false));
-  };
+  React.useEffect(() => {
+    const latest = scheduleState.result ?? rescheduleState.result ?? outcomeState.result;
+    if (latest && latest !== lastResultRef.current) {
+      lastResultRef.current = latest;
+      router.refresh();
+    }
+  }, [scheduleState.result, rescheduleState.result, outcomeState.result, router]);
 
-  const recordOutcome = (status: "completed" | "cancelled", recovered: boolean) => {
-    if (!open) return;
-    setPending(true);
-    setError(null);
-    recordHearingOutcomeAction(open.id, caseId, status, recovered)
-      .then(() => router.refresh())
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to record hearing outcome"))
-      .finally(() => setPending(false));
-  };
+  const error = scheduleState.error ?? rescheduleState.error ?? outcomeState.error;
 
   return (
     <div className="flex flex-col gap-2 rounded-md border border-border p-3">
@@ -149,37 +162,50 @@ function HearingPanel({ caseId, hearings }: { caseId: string; hearings: CaseHear
         <span className="text-xs font-medium">Hearing</span>
         {open ? <Badge tone="info">Scheduled {fmtDate(open.scheduledAt)}</Badge> : null}
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Label htmlFor="hearing-date" className="sr-only">Hearing date</Label>
-        <Input
-          id="hearing-date"
-          type="datetime-local"
-          className="h-8 w-auto"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-        />
-        {open ? (
-          <>
-            <Button size="sm" variant="outline" onClick={reschedule} disabled={!date || pending}>
-              Reschedule
-            </Button>
-            <Button size="sm" onClick={() => recordOutcome("completed", true)} disabled={pending}>
-              Order in favour
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => recordOutcome("completed", false)} disabled={pending}>
-              Order against
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => recordOutcome("cancelled", false)} disabled={pending}>
-              Cancel hearing
-            </Button>
-          </>
-        ) : (
-          <Button size="sm" onClick={schedule} disabled={!date || pending}>
+
+      {open ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <form action={rescheduleAction} className="flex flex-wrap items-center gap-2">
+            <input type="hidden" name="hearingId" value={open.id} />
+            <input type="hidden" name="caseId" value={caseId} />
+            <Label htmlFor="hearing-reschedule-date" className="sr-only">New hearing date</Label>
+            <Input id="hearing-reschedule-date" name="newStartsAt" type="datetime-local" className="h-8 w-auto" required />
+            <SubmitButton variant="outline">Reschedule</SubmitButton>
+          </form>
+          <form action={outcomeAction}>
+            <input type="hidden" name="hearingId" value={open.id} />
+            <input type="hidden" name="caseId" value={caseId} />
+            <input type="hidden" name="status" value="completed" />
+            <input type="hidden" name="recovered" value="true" />
+            <SubmitButton>Order in favour</SubmitButton>
+          </form>
+          <form action={outcomeAction}>
+            <input type="hidden" name="hearingId" value={open.id} />
+            <input type="hidden" name="caseId" value={caseId} />
+            <input type="hidden" name="status" value="completed" />
+            <input type="hidden" name="recovered" value="false" />
+            <SubmitButton variant="outline">Order against</SubmitButton>
+          </form>
+          <form action={outcomeAction}>
+            <input type="hidden" name="hearingId" value={open.id} />
+            <input type="hidden" name="caseId" value={caseId} />
+            <input type="hidden" name="status" value="cancelled" />
+            <input type="hidden" name="recovered" value="false" />
+            <SubmitButton variant="outline">Cancel hearing</SubmitButton>
+          </form>
+        </div>
+      ) : (
+        <form action={scheduleAction} className="flex flex-wrap items-center gap-2">
+          <input type="hidden" name="caseId" value={caseId} />
+          <Label htmlFor="hearing-date" className="sr-only">Hearing date</Label>
+          <Input id="hearing-date" name="startsAt" type="datetime-local" className="h-8 w-auto" required />
+          <SubmitButton>
             <CalendarPlus className="h-3.5 w-3.5" />
-            {pending ? "Scheduling…" : "Schedule hearing"}
-          </Button>
-        )}
-      </div>
+            Schedule hearing
+          </SubmitButton>
+        </form>
+      )}
+
       {history.length > 0 ? (
         <p className="text-xs text-muted-foreground">
           {history.length} earlier occurrence{history.length > 1 ? "s" : ""} on record.

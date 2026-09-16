@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { LinkButton } from "@/components/ui/link-button";
 import { SettingsScreen } from "@/components/screens/settings-screen";
 import { getRepo } from "@/server/repo";
+import { getAuthContext } from "@/lib/auth/session";
 
 export const metadata = { title: "Clients / Policy — Debtrecover" };
 
@@ -12,11 +13,22 @@ const PORTAL_RUN_STATUSES = ["gst_eligibility_review", "gst_notification_prepare
 
 export default async function ClientsPolicyPage() {
   const repo = getRepo();
-  const [{ enabled }, cases, organisations] = await Promise.all([
+  const [actor, { enabled }, cases, organisations] = await Promise.all([
+    getAuthContext(),
     repo.getAutomationState(),
     repo.listAllCases(),
     repo.listOrganisations(),
   ]);
+  // Onboarding a new client organisation and the global automation kill
+  // switch are both Admin-only per the accepted V1 role model (server
+  // actions already enforce this independently -- authorizeAdminMutation
+  // in src/app/actions/organisations.ts / settings.ts); this only decides
+  // whether to *render* those controls for a Staff session at all
+  // (authorization hardening task #6: "prefer not to render", never the
+  // real boundary). The demo fallback outside production (no real
+  // session) is treated as admin, matching demoStaffContext's own
+  // existing "outside production, staff mutations proceed" behavior.
+  const isAdmin = !actor || (actor.kind === "staff" && actor.role === "admin");
   const preparedCount = cases.filter((c) => c.status === "initial_communication_sent").length;
   const portalRunCount = cases.filter((c) => PORTAL_RUN_STATUSES.includes(c.status)).length;
   const caseCountByOrg = new Map<string, number>();
@@ -28,7 +40,7 @@ export default async function ClientsPolicyPage() {
         eyebrow="Clients & policy"
         title="Clients"
         description="Every client organisation cases can be scoped to. Admin controls below require a reason and create an audit event."
-        actions={<LinkButton href="/clients/new" variant="primary">+ Add client</LinkButton>}
+        actions={isAdmin ? <LinkButton href="/clients/new" variant="primary">+ Add client</LinkButton> : undefined}
       />
 
       <Card>
@@ -63,7 +75,9 @@ export default async function ClientsPolicyPage() {
         </CardContent>
       </Card>
 
-      <SettingsScreen enabled={enabled} preparedCount={preparedCount} portalRunCount={portalRunCount} />
+      {isAdmin ? (
+        <SettingsScreen enabled={enabled} preparedCount={preparedCount} portalRunCount={portalRunCount} />
+      ) : null}
     </div>
   );
 }

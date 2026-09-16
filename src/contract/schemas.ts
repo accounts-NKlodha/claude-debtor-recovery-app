@@ -4,6 +4,7 @@
  */
 
 import { z } from "zod";
+import { CHANNEL, REPLY_CLASSIFICATION } from "@/contract/enums";
 
 export const gstinSchema = z
   .string()
@@ -51,6 +52,22 @@ export const debtorContactSchema = z.object({
   mobile: optionalMobileSchema,
 });
 export type DebtorContactInput = z.infer<typeof debtorContactSchema>;
+
+/** Staff logging + classifying an inbound debtor reply (PRD §8; no AI
+ * classification is wired in this build, so classification is always
+ * staff-entered). `communicationId` links to an existing inbound message
+ * when this reply is being classified from one; absent when staff logs a
+ * reply received outside a tracked channel (e.g. a phone call). */
+export const debtorReplySchema = z.object({
+  channel: z.enum(CHANNEL),
+  rawBody: z.string().trim().min(1, "Reply text is required"),
+  communicationId: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.string().nullable().optional(),
+  ),
+  classification: z.enum(REPLY_CLASSIFICATION),
+});
+export type DebtorReplyInput = z.infer<typeof debtorReplySchema>;
 
 /** money entered by humans: "1,23,456.78" | "123456" | "-500" -> paise int */
 export const moneyToPaise = z

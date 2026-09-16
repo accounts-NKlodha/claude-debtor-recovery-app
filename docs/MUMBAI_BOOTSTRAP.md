@@ -137,6 +137,10 @@ data is loaded.
   `app_users` rows will remain permanently (see above) — this is expected
   and does not grant them any access once their Auth identity is gone (RLS
   keys off `auth.uid()`, which no longer resolves to any session).
-- Configure Google OAuth when credentials are available.
+- ~~Configure Google OAuth when credentials are available~~ — **superseded**:
+  V1 authentication is Supabase email + password for every role (staff,
+  admin, client), not Google OAuth (see `docs/DEPLOYMENT.md`
+  §"Authentication" and `docs/authorization-hardening/index.md`). Google
+  OAuth is deferred and not part of V1; this is no longer a planned next step.
 - Decide on and implement an off-site backup procedure before go-live (Free
   plan has no automated backups/PITR).

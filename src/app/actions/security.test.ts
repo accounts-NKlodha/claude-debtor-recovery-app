@@ -60,6 +60,40 @@ function paymentFormData(fields: {
   return fd;
 }
 
+function manualInvoiceFormData(
+  organisationId: string,
+  fields: {
+    debtorName: string;
+    invoiceNumber: string;
+    invoiceDate: string;
+    dueDate?: string;
+    taxableValue: string;
+    taxRate: string;
+    taxAmount: string;
+    invoiceTotal: string;
+    outstandingBalance: string;
+    debtorGstin?: string;
+    debtorEmail?: string;
+    debtorMobile?: string;
+  },
+): FormData {
+  const fd = new FormData();
+  fd.set("organisationId", organisationId);
+  fd.set("debtorName", fields.debtorName);
+  fd.set("invoiceNumber", fields.invoiceNumber);
+  fd.set("invoiceDate", fields.invoiceDate);
+  fd.set("dueDate", fields.dueDate ?? "");
+  fd.set("taxableValue", fields.taxableValue);
+  fd.set("taxRate", fields.taxRate);
+  fd.set("taxAmount", fields.taxAmount);
+  fd.set("invoiceTotal", fields.invoiceTotal);
+  fd.set("outstandingBalance", fields.outstandingBalance);
+  fd.set("debtorGstin", fields.debtorGstin ?? "");
+  fd.set("debtorEmail", fields.debtorEmail ?? "");
+  fd.set("debtorMobile", fields.debtorMobile ?? "");
+  return fd;
+}
+
 function confirmFormData(paymentId: string, caseId: string): FormData {
   const fd = new FormData();
   fd.set("paymentId", paymentId);
@@ -370,13 +404,40 @@ describe("setAutomationStateAction: admin-only privileged path (real entry point
   });
 });
 
+function organisationFormData(fields: {
+  clientCode: string;
+  legalEntityName: string;
+  creditorGstin?: string;
+  udyamNumber?: string;
+  jitoMember?: boolean;
+  confirmDuplicateName?: boolean;
+  duplicateOverrideReason?: string;
+  extra?: Record<string, string>;
+}): FormData {
+  const fd = new FormData();
+  fd.set("clientCode", fields.clientCode);
+  fd.set("legalEntityName", fields.legalEntityName);
+  fd.set("creditorGstin", fields.creditorGstin ?? "");
+  fd.set("udyamNumber", fields.udyamNumber ?? "");
+  fd.set("jitoMember", String(fields.jitoMember ?? false));
+  fd.set("confirmDuplicateName", String(fields.confirmDuplicateName ?? false));
+  fd.set("duplicateOverrideReason", fields.duplicateOverrideReason ?? "");
+  for (const [k, v] of Object.entries(fields.extra ?? {})) fd.set(k, v);
+  return fd;
+}
+
 describe("createOrganisationAction (real entry point): admin-only (P0-1/P0-2-R2)", () => {
-  it("rejects when unauthenticated, before any validation or persistence runs", async () => {
+  it("rejects when unauthenticated, before any persistence runs, with a controlled error not a throw", async () => {
     authorizeAdminMutation.mockRejectedValue(new UnauthenticatedError());
     const { createOrganisationAction } = await import("./organisations");
     const before = mock.ORGANISATIONS.length;
 
-    await expect(createOrganisationAction({ garbage: true })).rejects.toThrow(UnauthenticatedError);
+    const result = await createOrganisationAction(
+      { result: null, error: null },
+      organisationFormData({ clientCode: "NKL-UNAUTH1", legalEntityName: "Should Not Be Created Pvt Ltd" }),
+    );
+    expect(result.result).toBeNull();
+    expect(result.error).toBe("You do not have permission to perform this action.");
     expect(mock.ORGANISATIONS.length).toBe(before);
   });
 
@@ -385,17 +446,12 @@ describe("createOrganisationAction (real entry point): admin-only (P0-1/P0-2-R2)
     const { createOrganisationAction } = await import("./organisations");
     const before = mock.ORGANISATIONS.length;
 
-    await expect(
-      createOrganisationAction({
-        clientCode: "NKL-DENY1",
-        legalEntityName: "Should Not Be Created Pvt Ltd",
-        creditorGstin: null,
-        udyamNumber: null,
-        jitoMember: false,
-        confirmDuplicateName: false,
-        duplicateOverrideReason: null,
-      }),
-    ).rejects.toThrow(ForbiddenError);
+    const result = await createOrganisationAction(
+      { result: null, error: null },
+      organisationFormData({ clientCode: "NKL-DENY1", legalEntityName: "Should Not Be Created Pvt Ltd" }),
+    );
+    expect(result.result).toBeNull();
+    expect(result.error).toBe("You do not have permission to perform this action.");
     expect(mock.ORGANISATIONS.length).toBe(before); // no side effect happened
   });
 
@@ -403,51 +459,60 @@ describe("createOrganisationAction (real entry point): admin-only (P0-1/P0-2-R2)
     authorizeAdminMutation.mockRejectedValue(new ForbiddenError("Admin session required"));
     const { createOrganisationAction } = await import("./organisations");
 
-    await expect(createOrganisationAction({ garbage: true })).rejects.toThrow();
+    await createOrganisationAction(
+      { result: null, error: null },
+      organisationFormData({ clientCode: "NKL-DENY2", legalEntityName: "Should Not Be Created 2 Pvt Ltd" }),
+    );
     expect(authorizeStaffMutation).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed/direct submission before authorization is even attempted", async () => {
+    const { createOrganisationAction } = await import("./organisations");
+    const result = await createOrganisationAction(
+      { result: null, error: null },
+      organisationFormData({ clientCode: "", legalEntityName: "" }),
+    );
+    expect(result.result).toBeNull();
+    expect(result.error).toBeTruthy();
+    expect(authorizeAdminMutation).not.toHaveBeenCalled();
   });
 
   it("succeeds for an authorized admin and attributes the created organisation's audit entry to them", async () => {
     authorizeAdminMutation.mockResolvedValue(STAFF_B);
     const { createOrganisationAction } = await import("./organisations");
 
-    const result = await createOrganisationAction({
-      clientCode: `NKL-S${Date.now().toString().slice(-6)}`,
-      legalEntityName: "Security Test Org Pvt Ltd",
-      creditorGstin: null,
-      udyamNumber: null,
-      jitoMember: false,
-      confirmDuplicateName: false,
-      duplicateOverrideReason: null,
-    });
-    expect(result.status).toBe("created");
-    if (result.status !== "created") throw new Error("unreachable");
+    const result = await createOrganisationAction(
+      { result: null, error: null },
+      organisationFormData({
+        clientCode: `NKL-S${Date.now().toString().slice(-6)}`,
+        legalEntityName: "Security Test Org Pvt Ltd",
+      }),
+    );
+    expect(result.error).toBeNull();
+    const orgResult = result.result;
+    if (orgResult?.status !== "created") throw new Error("unreachable");
 
-    const audit = (await getRepo().listAuditLog(20)).find((a) => a.entityId === result.organisation.id);
+    const audit = (await getRepo().listAuditLog(20)).find((a) => a.entityId === orgResult.organisation.id);
     expect(audit?.actorId).toBe(STAFF_B.actorId);
   });
 
-  it("a submitted input carrying a role-like field cannot elevate privilege -- the schema has no role/actor field at all", async () => {
+  it("a submitted input carrying a role-like field cannot elevate privilege -- the action only ever reads its own named fields", async () => {
     authorizeAdminMutation.mockResolvedValue(STAFF_B);
     const { createOrganisationAction } = await import("./organisations");
 
-    const result = await createOrganisationAction({
-      clientCode: `NKL-R${Date.now().toString().slice(-6)}`,
-      legalEntityName: "Role Injection Attempt Pvt Ltd",
-      creditorGstin: null,
-      udyamNumber: null,
-      jitoMember: false,
-      confirmDuplicateName: false,
-      duplicateOverrideReason: null,
-      // Attacker-supplied fields a naive implementation might trust:
-      role: "admin",
-      actorId: "attacker-forged-id",
-      actorRole: "admin",
-    } as never);
+    const result = await createOrganisationAction(
+      { result: null, error: null },
+      organisationFormData({
+        clientCode: `NKL-R${Date.now().toString().slice(-6)}`,
+        legalEntityName: "Role Injection Attempt Pvt Ltd",
+        // Attacker-supplied fields a naive implementation might trust:
+        extra: { role: "admin", actorId: "attacker-forged-id", actorRole: "admin" },
+      }),
+    );
 
-    expect(result.status).toBe("created");
-    if (result.status !== "created") throw new Error("unreachable");
-    const audit = (await getRepo().listAuditLog(20)).find((a) => a.entityId === result.organisation.id);
+    const orgResult = result.result;
+    if (orgResult?.status !== "created") throw new Error("unreachable");
+    const audit = (await getRepo().listAuditLog(20)).find((a) => a.entityId === orgResult.organisation.id);
     // Attribution still comes from the (mocked) session actor, not the payload.
     expect(audit?.actorId).toBe(STAFF_B.actorId);
     expect(audit?.actorId).not.toBe("attacker-forged-id");
@@ -455,27 +520,52 @@ describe("createOrganisationAction (real entry point): admin-only (P0-1/P0-2-R2)
 });
 
 describe("hearing.ts / ocr.ts / manual-invoice.ts / bulk-import.ts: authenticate independently of src/proxy.ts", () => {
-  it("prepareDdTaskAction and scheduleHearingAction both reject with no session", async () => {
+  it("prepareDdTaskAction and scheduleHearingAction both reject with no session, returning a controlled state not a throw", async () => {
     authorizeStaffMutation.mockRejectedValue(new UnauthenticatedError());
     const { prepareDdTaskAction, scheduleHearingAction } = await import("./hearing");
     const caseId = mock.CASES[0].id;
 
-    await expect(prepareDdTaskAction(caseId)).rejects.toThrow(UnauthenticatedError);
-    await expect(scheduleHearingAction(caseId, new Date().toISOString())).rejects.toThrow(UnauthenticatedError);
+    const prepareFd = new FormData();
+    prepareFd.set("caseId", caseId);
+    const prepareResult = await prepareDdTaskAction({ result: null, error: null }, prepareFd);
+    expect(prepareResult.result).toBeNull();
+    expect(prepareResult.error).toBe("You do not have permission to perform this action.");
+
+    const scheduleFd = new FormData();
+    scheduleFd.set("caseId", caseId);
+    scheduleFd.set("startsAt", new Date().toISOString());
+    const scheduleResult = await scheduleHearingAction({ result: null, error: null }, scheduleFd);
+    expect(scheduleResult.result).toBeNull();
+    expect(scheduleResult.error).toBe("You do not have permission to perform this action.");
   });
 
-  it("recordDdSubmittedAction, rescheduleHearingAction and recordHearingOutcomeAction all reject with no session", async () => {
+  it("recordDdSubmittedAction, rescheduleHearingAction and recordHearingOutcomeAction all reject with no session, returning a controlled state", async () => {
     authorizeStaffMutation.mockRejectedValue(new UnauthenticatedError());
     const { recordDdSubmittedAction, rescheduleHearingAction, recordHearingOutcomeAction } = await import("./hearing");
     const caseId = mock.CASES[0].id;
 
-    await expect(recordDdSubmittedAction(caseId)).rejects.toThrow(UnauthenticatedError);
-    await expect(
-      rescheduleHearingAction("hearing-nope", caseId, new Date().toISOString()),
-    ).rejects.toThrow(UnauthenticatedError);
-    await expect(
-      recordHearingOutcomeAction("hearing-nope", caseId, "completed", true),
-    ).rejects.toThrow(UnauthenticatedError);
+    const submitFd = new FormData();
+    submitFd.set("caseId", caseId);
+    const submitResult = await recordDdSubmittedAction({ result: null, error: null }, submitFd);
+    expect(submitResult.result).toBeNull();
+    expect(submitResult.error).toBe("You do not have permission to perform this action.");
+
+    const rescheduleFd = new FormData();
+    rescheduleFd.set("hearingId", "hearing-nope");
+    rescheduleFd.set("caseId", caseId);
+    rescheduleFd.set("newStartsAt", new Date().toISOString());
+    const rescheduleResult = await rescheduleHearingAction({ result: null, error: null }, rescheduleFd);
+    expect(rescheduleResult.result).toBeNull();
+    expect(rescheduleResult.error).toBe("You do not have permission to perform this action.");
+
+    const outcomeFd = new FormData();
+    outcomeFd.set("hearingId", "hearing-nope");
+    outcomeFd.set("caseId", caseId);
+    outcomeFd.set("status", "completed");
+    outcomeFd.set("recovered", "true");
+    const outcomeResult = await recordHearingOutcomeAction({ result: null, error: null }, outcomeFd);
+    expect(outcomeResult.result).toBeNull();
+    expect(outcomeResult.error).toBe("You do not have permission to perform this action.");
   });
 
   it("recordDebtorReplyAction rejects with no session and never records the reply", async () => {
@@ -484,9 +574,14 @@ describe("hearing.ts / ocr.ts / manual-invoice.ts / bulk-import.ts: authenticate
     const caseId = mock.CASES[0].id;
     const before = mock.DEBTOR_REPLIES.length;
 
-    await expect(
-      recordDebtorReplyAction(caseId, { channel: "whatsapp", rawBody: "forged reply", classification: "payment_made" }),
-    ).rejects.toThrow(UnauthenticatedError);
+    const fd = new FormData();
+    fd.set("caseId", caseId);
+    fd.set("channel", "whatsapp");
+    fd.set("rawBody", "forged reply");
+    fd.set("classification", "payment_made");
+    const result = await recordDebtorReplyAction({ result: null, error: null }, fd);
+    expect(result.result).toBeNull();
+    expect(result.error).toBe("You do not have permission to perform this action.");
     expect(mock.DEBTOR_REPLIES.length).toBe(before);
   });
 
@@ -498,7 +593,12 @@ describe("hearing.ts / ocr.ts / manual-invoice.ts / bulk-import.ts: authenticate
       title: "security-test task", waitingOn: "staff", assigneeId: null, urgent: false, dueAt: null,
     });
 
-    await expect(resolveWorkflowTaskAction(task.id, "forged resolution")).rejects.toThrow(UnauthenticatedError);
+    const fd = new FormData();
+    fd.set("taskId", task.id);
+    fd.set("reason", "forged resolution");
+    const result = await resolveWorkflowTaskAction({ result: null, error: null }, fd);
+    expect(result.result).toBeNull();
+    expect(result.error).toBe("You do not have permission to perform this action.");
     expect(mock.TASKS.find((t) => t.id === task.id)?.resolvedAt).toBeNull();
   });
 
@@ -563,14 +663,17 @@ describe("hearing.ts / ocr.ts / manual-invoice.ts / bulk-import.ts: authenticate
     const { recordDebtorReplyAction } = await import("./debtor-replies");
     const kase = mock.CASES.find((c) => c.status === "initial_communication_sent")!;
 
-    const { reply } = await recordDebtorReplyAction(kase.id, {
-      channel: "email",
-      rawBody: "attribution test",
-      classification: "unclear",
-    });
+    const fd = new FormData();
+    fd.set("caseId", kase.id);
+    fd.set("channel", "email");
+    fd.set("rawBody", "attribution test");
+    fd.set("classification", "unclear");
+    const result = await recordDebtorReplyAction({ result: null, error: null }, fd);
+    expect(result.error).toBeNull();
     const audit = (await getRepo().listAuditLog(5)).find((a) => a.entityId === kase.id && a.action === "debtor_reply.recorded");
     expect(audit?.actorId).toBe(STAFF_B.actorId);
-    expect(reply.reviewedById).toBe(STAFF_B.actorId);
+    const reply = mock.DEBTOR_REPLIES.find((r) => r.id === result.result?.replyId);
+    expect(reply?.reviewedById).toBe(STAFF_B.actorId);
   });
 
   it("correctInvoiceOcrAction rejects with no session and never touches the invoice", async () => {
@@ -580,9 +683,17 @@ describe("hearing.ts / ocr.ts / manual-invoice.ts / bulk-import.ts: authenticate
     const invoice = mock.listInvoicesForCase(kase.id)[0];
     const before = invoice.invoiceNumber;
 
-    await expect(
-      correctInvoiceOcrAction(kase.id, invoice.id, { invoiceNumber: "FORGED-999" }),
-    ).rejects.toThrow(UnauthenticatedError);
+    const fd = new FormData();
+    fd.set("caseId", kase.id);
+    fd.set("invoiceId", invoice.id);
+    fd.set("invoiceNumber", "FORGED-999");
+    fd.set("taxableValue", String(invoice.taxableValue / 100));
+    fd.set("taxAmount", String(invoice.taxAmount / 100));
+    fd.set("invoiceTotal", String(invoice.invoiceTotal / 100));
+    fd.set("outstandingBalance", String(invoice.outstandingBalance / 100));
+    const result = await correctInvoiceOcrAction({ result: null, error: null }, fd);
+    expect(result.result).toBeNull();
+    expect(result.error).toBe("You do not have permission to perform this action.");
     expect(mock.listInvoicesForCase(kase.id)[0].invoiceNumber).toBe(before);
   });
 
@@ -593,20 +704,19 @@ describe("hearing.ts / ocr.ts / manual-invoice.ts / bulk-import.ts: authenticate
     const org = mock.ORGANISATIONS[0];
     const before = mock.CASES.length;
 
-    await expect(
-      createCaseFromManualInvoiceAction(org.id, {
-        debtorName: "Forged Debtor",
-        debtorGstin: null,
-        invoiceNumber: "FORGE-1",
-        invoiceDate: "2026-01-01",
-        dueDate: null,
-        taxableValue: 1000,
-        taxRate: 18,
-        taxAmount: 180,
-        invoiceTotal: 1180,
-        outstandingBalance: 1180,
-      }),
-    ).rejects.toThrow(UnauthenticatedError);
+    const fd = manualInvoiceFormData(org.id, {
+      debtorName: "Forged Debtor",
+      invoiceNumber: "FORGE-1",
+      invoiceDate: "01/01/2026",
+      taxableValue: "1000",
+      taxRate: "18",
+      taxAmount: "180",
+      invoiceTotal: "1180",
+      outstandingBalance: "1180",
+    });
+    const result = await createCaseFromManualInvoiceAction({ result: null, error: null }, fd);
+    expect(result.result).toBeNull();
+    expect(result.error).toBe("You do not have permission to perform this action.");
 
     await expect(commitBulkImportAction(org.id, "irrelevant,csv\n1,2")).rejects.toThrow(UnauthenticatedError);
     expect(mock.CASES.length).toBe(before);

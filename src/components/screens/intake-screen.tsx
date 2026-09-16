@@ -1,13 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { useForm, type FieldValues } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { useActionState } from "react";
+import { useFormStatus } from "react-dom";
 import { Upload, FileSpreadsheet, CircleCheck, CircleAlert } from "lucide-react";
-import { manualInvoiceSchema, reminderComposeSchema, type ManualInvoiceInput } from "@/contract/schemas";
+import { reminderComposeSchema } from "@/contract/schemas";
 import type { ImportResult, Organisation } from "@/contract/types";
 import { commitBulkImportAction, validateBulkImportAction } from "@/app/actions/bulk-import";
-import { createCaseFromManualInvoiceAction } from "@/app/actions/manual-invoice";
+import { createCaseFromManualInvoiceAction, type CreateManualInvoiceState } from "@/app/actions/manual-invoice";
 import { formatInr } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -119,88 +119,86 @@ function ReminderComposer() {
 
 /* --------------------------------------------------- manual invoice ---- */
 
+const CREATE_MANUAL_INVOICE_IDLE: CreateManualInvoiceState = { result: null, error: null };
+
+function CreateInvoiceButton() {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" disabled={pending}>
+      {pending ? "Creating…" : "Add invoice to draft case"}
+    </Button>
+  );
+}
+
 function ManualInvoiceForm({ organisationId }: { organisationId: string }) {
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: { errors },
-  } = useForm<FieldValues>({ resolver: zodResolver(manualInvoiceSchema) as never });
-  const [submitting, setSubmitting] = React.useState(false);
-  const [created, setCreated] = React.useState<{ caseId: string; status: string } | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
-
-  const err = (k: string) => (errors[k]?.message as string | undefined) ?? undefined;
-
-  const onValid = (data: FieldValues) => {
-    setSubmitting(true);
-    setError(null);
-    setCreated(null);
-    createCaseFromManualInvoiceAction(organisationId, data as unknown as ManualInvoiceInput)
-      .then((res) => {
-        setCreated({ caseId: res.case.id, status: res.case.status });
-        reset();
-      })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to create the draft case"))
-      .finally(() => setSubmitting(false));
-  };
+  const [state, formAction] = useActionState<CreateManualInvoiceState, FormData>(
+    createCaseFromManualInvoiceAction,
+    CREATE_MANUAL_INVOICE_IDLE,
+  );
+  const formRef = React.useRef<HTMLFormElement>(null);
+  const lastResultRef = React.useRef<CreateManualInvoiceState["result"]>(null);
+  React.useEffect(() => {
+    if (state.result && state.result !== lastResultRef.current) {
+      lastResultRef.current = state.result;
+      formRef.current?.reset();
+    }
+  }, [state.result]);
 
   return (
-    <form onSubmit={handleSubmit(onValid)} className="grid gap-4 sm:grid-cols-2">
-      <Field id="mi-invoiceNumber" label="Invoice number" error={err("invoiceNumber")}>
-        <Input id="mi-invoiceNumber" {...register("invoiceNumber")} />
+    <form ref={formRef} action={formAction} className="grid gap-4 sm:grid-cols-2">
+      <input type="hidden" name="organisationId" value={organisationId} />
+      <Field id="mi-invoiceNumber" label="Invoice number">
+        <Input id="mi-invoiceNumber" name="invoiceNumber" required />
       </Field>
-      <Field id="mi-debtorName" label="Debtor name" error={err("debtorName")}>
-        <Input id="mi-debtorName" {...register("debtorName")} />
+      <Field id="mi-debtorName" label="Debtor name">
+        <Input id="mi-debtorName" name="debtorName" required />
       </Field>
-      <Field id="mi-debtorEmail" label="Debtor email (optional)" error={err("debtorEmail")}>
-        <Input id="mi-debtorEmail" type="email" placeholder="debtor@example.com" {...register("debtorEmail")} />
+      <Field id="mi-debtorEmail" label="Debtor email (optional)">
+        <Input id="mi-debtorEmail" name="debtorEmail" type="email" placeholder="debtor@example.com" />
       </Field>
-      <Field id="mi-debtorMobile" label="Debtor mobile (optional)" error={err("debtorMobile")}>
-        <Input id="mi-debtorMobile" placeholder="+91 98765 43210" {...register("debtorMobile")} />
+      <Field id="mi-debtorMobile" label="Debtor mobile (optional)">
+        <Input id="mi-debtorMobile" name="debtorMobile" placeholder="+91 98765 43210" />
       </Field>
       <p className="col-span-full -mt-2 text-xs text-muted-foreground">
         Email is required for an automated reminder (Gmail is the only production delivery channel;
         WhatsApp is not enabled). A case can still be created without either -- contact details can be
         added later from the case page.
       </p>
-      <Field id="mi-invoiceDate" label="Invoice date (DD/MM/YYYY)" error={err("invoiceDate")}>
-        <Input id="mi-invoiceDate" placeholder="14/06/2026" {...register("invoiceDate")} />
+      <Field id="mi-invoiceDate" label="Invoice date (DD/MM/YYYY)">
+        <Input id="mi-invoiceDate" name="invoiceDate" placeholder="14/06/2026" required />
       </Field>
-      <Field id="mi-dueDate" label="Due date (optional)" error={err("dueDate")}>
-        <Input id="mi-dueDate" placeholder="14/07/2026" {...register("dueDate")} />
+      <Field id="mi-dueDate" label="Due date (optional)">
+        <Input id="mi-dueDate" name="dueDate" placeholder="14/07/2026" />
       </Field>
-      <Field id="mi-taxableValue" label="Taxable value (₹)" error={err("taxableValue")}>
-        <Input id="mi-taxableValue" inputMode="decimal" {...register("taxableValue")} />
+      <Field id="mi-taxableValue" label="Taxable value (₹)">
+        <Input id="mi-taxableValue" name="taxableValue" inputMode="decimal" required />
       </Field>
-      <Field id="mi-taxRate" label="Tax rate (%)" error={err("taxRate")}>
-        <Input id="mi-taxRate" inputMode="decimal" defaultValue="18" {...register("taxRate")} />
+      <Field id="mi-taxRate" label="Tax rate (%)">
+        <Input id="mi-taxRate" name="taxRate" inputMode="decimal" defaultValue="18" required />
       </Field>
-      <Field id="mi-taxAmount" label="Tax amount (₹)" error={err("taxAmount")}>
-        <Input id="mi-taxAmount" inputMode="decimal" {...register("taxAmount")} />
+      <Field id="mi-taxAmount" label="Tax amount (₹)">
+        <Input id="mi-taxAmount" name="taxAmount" inputMode="decimal" required />
       </Field>
-      <Field id="mi-invoiceTotal" label="Invoice total (₹)" error={err("invoiceTotal")}>
-        <Input id="mi-invoiceTotal" inputMode="decimal" {...register("invoiceTotal")} />
+      <Field id="mi-invoiceTotal" label="Invoice total (₹)">
+        <Input id="mi-invoiceTotal" name="invoiceTotal" inputMode="decimal" required />
       </Field>
-      <Field id="mi-outstandingBalance" label="Outstanding balance (₹)" error={err("outstandingBalance")}>
-        <Input id="mi-outstandingBalance" inputMode="decimal" {...register("outstandingBalance")} />
+      <Field id="mi-outstandingBalance" label="Outstanding balance (₹)">
+        <Input id="mi-outstandingBalance" name="outstandingBalance" inputMode="decimal" required />
       </Field>
-      <Field id="mi-debtorGstin" label="Debtor GSTIN (optional)" error={err("debtorGstin")}>
-        <Input id="mi-debtorGstin" className="font-mono" {...register("debtorGstin")} />
+      <Field id="mi-debtorGstin" label="Debtor GSTIN (optional)">
+        <Input id="mi-debtorGstin" name="debtorGstin" className="font-mono" />
       </Field>
       <div className="col-span-full flex flex-wrap items-center gap-3">
-        <Button type="submit" disabled={submitting}>
-          {submitting ? "Creating…" : "Add invoice to draft case"}
-        </Button>
-        {created ? (
+        <CreateInvoiceButton />
+        {state.result ? (
           <span className="inline-flex items-center gap-1 text-xs text-success">
-            <CircleCheck className="h-3.5 w-3.5" /> Draft case {created.caseId} created — status &quot;
-            {created.status}&quot;, not yet activated
+            <CircleCheck className="h-3.5 w-3.5" /> Draft case {state.result.caseId} created — status &quot;
+            {state.result.status}&quot;, not yet activated
           </span>
         ) : null}
-        {error ? (
+        {state.error ? (
           <span className="inline-flex items-center gap-1 text-xs text-danger" role="alert">
-            <CircleAlert className="h-3.5 w-3.5" /> {error}
+            <CircleAlert className="h-3.5 w-3.5" /> {state.error}
           </span>
         ) : null}
       </div>

@@ -8,7 +8,11 @@ import { formatInr } from "@/lib/utils";
 
 export const metadata = { title: "Today / Urgent — Debtrecover" };
 
-// TODO(api): scope to the signed-in staff member's org access once auth lands.
+// Staff/admin sessions intentionally see this queue across every client
+// organisation (PRD §4's legitimate staff cross-org capability) -- there is
+// no per-staff org scope to add here. Authorization for this page is
+// enforced by the shared (internal) layout (src/app/(internal)/layout.tsx),
+// with RLS as independent defense-in-depth (see docs/authorization-hardening).
 export default async function TodayPage() {
   const repo = getRepo();
   const queue = await repo.urgentQueue();

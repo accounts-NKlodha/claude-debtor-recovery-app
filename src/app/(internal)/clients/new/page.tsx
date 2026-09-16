@@ -1,10 +1,28 @@
+import { redirect } from "next/navigation";
 import { TriangleAlert } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { NewClientForm } from "@/components/screens/new-client-form";
+import { getAuthContext } from "@/lib/auth/session";
 
 export const metadata = { title: "Add client — Debtrecover" };
 
-export default function NewClientPage() {
+/**
+ * Admin-only page (authorization hardening task #6/#15): onboarding a new
+ * client organisation is an Admin operation per the accepted V1 role
+ * model. The server action already enforces this independently
+ * (authorizeAdminMutation, src/app/actions/organisations.ts) -- this page-
+ * level check additionally stops a Staff session from ever rendering the
+ * form at all, per "prefer not to render Admin-only controls for Staff".
+ * Demo fallback outside production is treated as admin, matching
+ * requireAdminContext's own existing demo-bypass behavior.
+ */
+export default async function NewClientPage() {
+  const actor = await getAuthContext();
+  const isAdmin = !actor || (actor.kind === "staff" && actor.role === "admin");
+  if (!isAdmin) {
+    redirect("/clients");
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <PageHeader

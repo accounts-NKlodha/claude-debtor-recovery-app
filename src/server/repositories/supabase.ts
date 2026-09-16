@@ -1317,7 +1317,21 @@ export class SupabaseRepository implements Repository {
       return { case: kase, referenceNumber: null };
     }
 
-    const referenceNumber = staffReference || outcome.result.data?.referenceNumber || "UNSPECIFIED";
+    // Production safety (authorization hardening task, #19): a real GST
+    // filing reference can only ever come from the staff operator who
+    // actually completed the filing on the real government portal --
+    // never from the mock adapter's own fabricated data (there is no real
+    // GST portal integration; gstPortal stays mocked regardless of
+    // profile/environment, src/adapters/index.ts), and never a placeholder
+    // like "UNSPECIFIED" standing in for a real filing. The browser form
+    // already makes this field required (src/components/screens/
+    // gst-screen.tsx), but that is convenience only -- a direct/bypassed
+    // submission with a blank reference must be rejected here too, not
+    // silently accepted as filed.
+    const referenceNumber = staffReference.trim();
+    if (!referenceNumber) {
+      throw new Error("captureGstFiling: a real portal reference number is required -- none was supplied.");
+    }
     const filedAt = new Date();
     const filed = applyGstFiled(kase, filedAt);
     const debtor = await this.getDebtor(kase.debtorId);

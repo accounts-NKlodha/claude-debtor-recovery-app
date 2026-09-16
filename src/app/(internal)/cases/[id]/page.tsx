@@ -2,8 +2,12 @@ import { notFound } from "next/navigation";
 import { CaseDetail, type CaseDetailVM } from "@/components/screens/case-detail";
 import { getRepo } from "@/server/repo";
 
-// TODO(api): add row-level authorization once auth lands (client users must
-// only reach cases in their own organisation).
+// Client users cannot reach this page at all -- it lives under (internal),
+// gated to staff/admin sessions only by the shared layout
+// (src/app/(internal)/layout.tsx, authorization hardening task). RLS
+// remains independent defense-in-depth for row-level tenant isolation (see
+// docs/authorization-hardening); staff/admin sessions intentionally see
+// cases across every client organisation (PRD §4).
 export default async function CaseDetailPage({
   params,
 }: {

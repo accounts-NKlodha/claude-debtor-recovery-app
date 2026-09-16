@@ -4,7 +4,11 @@ import { getRepo } from "@/server/repo";
 
 export const metadata = { title: "Replies / Payments — Debtrecover" };
 
-// TODO(api): scope to the signed-in staff member's org access once auth lands.
+// Staff/admin sessions intentionally see payments across every client
+// organisation (PRD §4's legitimate staff cross-org capability) -- there is
+// no per-staff org scope to add here. Authorization for this page is
+// enforced by the shared (internal) layout (src/app/(internal)/layout.tsx),
+// with RLS as independent defense-in-depth (see docs/authorization-hardening).
 export default async function PaymentsPage() {
   const repo = getRepo();
   const [payments, organisations, cases] = await Promise.all([

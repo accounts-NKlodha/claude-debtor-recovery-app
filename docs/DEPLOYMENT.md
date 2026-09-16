@@ -196,6 +196,15 @@ What's required to make a real staff/client identity usable in production:
 ever used to build the OAuth redirect origin) — safe to leave set or unset;
 not required for sign-in to function.
 
+**Route-level authorization (authorization + server-action hardening task,
+2026-09-17).** Authentication alone (above) only proves *someone* signed in;
+it does not prove they were shown the surface for their own role. Final UAT
+found a signed-in client could still navigate to and render internal
+staff/admin pages (RLS blocked the underlying data, but the page itself
+still rendered). This is now closed at the shared layout level — see
+`docs/authorization-hardening/index.md` for the full route/action inventory,
+the authorization model, and the live/browser verification evidence.
+
 ## 4. Build & run
 
 ```bash
