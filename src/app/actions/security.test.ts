@@ -718,7 +718,12 @@ describe("hearing.ts / ocr.ts / manual-invoice.ts / bulk-import.ts: authenticate
     expect(result.result).toBeNull();
     expect(result.error).toBe("You do not have permission to perform this action.");
 
-    await expect(commitBulkImportAction(org.id, "irrelevant,csv\n1,2")).rejects.toThrow(UnauthenticatedError);
+    const commitFd = new FormData();
+    commitFd.set("organisationId", org.id);
+    commitFd.set("csvText", "irrelevant,csv\n1,2");
+    const commitResult = await commitBulkImportAction({ result: null, error: null }, commitFd);
+    expect(commitResult.result).toBeNull();
+    expect(commitResult.error).toBe("You do not have permission to perform this action.");
     expect(mock.CASES.length).toBe(before);
   });
 });

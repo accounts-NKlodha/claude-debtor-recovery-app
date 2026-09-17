@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useActionState } from "react";
 import { useRouter } from "next/navigation";
 import { ShieldCheck, Lock, Camera, CircleCheck, TriangleAlert, Paperclip, CircleAlert } from "lucide-react";
 import { gstComposeSchema } from "@/contract/schemas";
@@ -8,6 +9,9 @@ import {
   captureGstFilingAction,
   openGstAssistedSessionAction,
   prepareGstNotificationAction,
+  type CaptureGstFilingState,
+  type OpenGstAssistedSessionState,
+  type PrepareGstNotificationState,
 } from "@/app/actions/gst";
 import { formatInr } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -22,6 +26,10 @@ const SUBJECT_MAX = 50;
 const REMARKS_MAX = 200;
 const ATTACH_MAX = 4;
 const RECORDS_MAX = 50;
+
+const PREPARE_GST_IDLE: PrepareGstNotificationState = { result: null, error: null };
+const OPEN_SESSION_IDLE: OpenGstAssistedSessionState = { result: null, error: null };
+const CAPTURE_GST_IDLE: CaptureGstFilingState = { result: null, error: null };
 
 export interface GstPack {
   caseId: string;
@@ -53,10 +61,49 @@ export function GstScreen({ pack }: { pack: GstPack }) {
     "invoice-bundle.pdf",
   ]);
   const [records, setRecords] = React.useState(Math.min(pack.invoiceCount, RECORDS_MAX));
-  const [session, setSession] = React.useState<"idle" | "opening" | "open" | "sent" | "filing">("idle");
-  const [sessionUrl, setSessionUrl] = React.useState<string | null>(null);
+  // Purely a local UI signal -- the operator confirming "I completed CAPTCHA
+  // & Send" on the real GST portal has no server correlate at all (no real
+  // portal automation exists), same as before this conversion.
+  const [captchaConfirmed, setCaptchaConfirmed] = React.useState(false);
   const [ref, setRef] = React.useState("");
-  const [error, setError] = React.useState<string | null>(null);
+
+  const [prepareState, prepareAction, preparePending] = useActionState<PrepareGstNotificationState, FormData>(
+    prepareGstNotificationAction,
+    PREPARE_GST_IDLE,
+  );
+  const [openSessionState, openSessionAction, openSessionPending] = useActionState<
+    OpenGstAssistedSessionState,
+    FormData
+  >(openGstAssistedSessionAction, OPEN_SESSION_IDLE);
+  const [captureState, captureAction, capturePending] = useActionState<CaptureGstFilingState, FormData>(
+    captureGstFilingAction,
+    CAPTURE_GST_IDLE,
+  );
+
+  const openSessionFormRef = React.useRef<HTMLFormElement>(null);
+  const lastPrepareResultRef = React.useRef<PrepareGstNotificationState["result"]>(null);
+  const lastCaptureResultRef = React.useRef<CaptureGstFilingState["result"]>(null);
+
+  // Preparing the pack and opening the assisted session are two distinct
+  // actions (distinct audit trail, distinct revalidation) chained on the
+  // client: opening auto-submits its own hidden form once preparation
+  // actually succeeds, rather than firing both from one click regardless
+  // of the first result.
+  React.useEffect(() => {
+    if (prepareState.result && prepareState.result !== lastPrepareResultRef.current) {
+      lastPrepareResultRef.current = prepareState.result;
+      openSessionFormRef.current?.requestSubmit();
+    }
+  }, [prepareState.result]);
+
+  React.useEffect(() => {
+    if (captureState.result && captureState.result !== lastCaptureResultRef.current) {
+      lastCaptureResultRef.current = captureState.result;
+      if (captureState.result.referenceNumber) {
+        router.refresh();
+      }
+    }
+  }, [captureState.result, router]);
 
   const parsed = gstComposeSchema.safeParse({
     recipientGstin: pack.recipientGstin,
@@ -68,40 +115,29 @@ export function GstScreen({ pack }: { pack: GstPack }) {
   });
   const valid = parsed.success;
 
-  const openSession = () => {
-    if (!parsed.success) return;
-    setError(null);
-    setSession("opening");
-    prepareGstNotificationAction(pack.caseId, parsed.data)
-      .then(() => openGstAssistedSessionAction(pack.caseId))
-      .then((res) => {
-        setSessionUrl(res.sessionUrl);
-        setSession("open");
-      })
-      .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : "Failed to open the assisted session");
-        setSession("idle");
-      });
-  };
+  const sessionUrl = openSessionState.result?.sessionUrl ?? null;
+  const filingSucceeded = !!captureState.result?.referenceNumber;
+  // Distinguishes a genuine thrown/authorization failure (state.error) from
+  // the legitimate "submitted, but the portal didn't return a reference"
+  // business outcome (result present with a null referenceNumber).
+  const captureBusinessFailure = captureState.result && !captureState.result.referenceNumber;
+  const error =
+    prepareState.error ??
+    openSessionState.error ??
+    captureState.error ??
+    (captureBusinessFailure
+      ? "Filing capture did not return a reference -- check Audit / Security for the failure reason."
+      : null);
 
-  const recordFiling = () => {
-    setError(null);
-    setSession("filing");
-    captureGstFilingAction(pack.caseId, ref)
-      .then((res) => {
-        if (!res.referenceNumber) {
-          setError("Filing capture did not return a reference -- check Audit / Security for the failure reason.");
-          setSession("open");
-          return;
-        }
-        setSession("sent");
-        router.refresh();
-      })
-      .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : "Failed to capture the filing");
-        setSession("open");
-      });
-  };
+  const session: "idle" | "opening" | "open" | "sent" | "filing" = capturePending
+    ? "filing"
+    : captchaConfirmed && !captureBusinessFailure
+      ? "sent"
+      : sessionUrl
+        ? "open"
+        : preparePending || openSessionPending
+          ? "opening"
+          : "idle";
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
@@ -211,17 +247,31 @@ export function GstScreen({ pack }: { pack: GstPack }) {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3 pt-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                disabled={!valid || session !== "idle"}
-                onClick={openSession}
-              >
+            {/* Hidden, auto-submitted once preparation succeeds -- see the
+             * effect above. Opening the session has no fields of its own
+             * beyond the case id. */}
+            <form ref={openSessionFormRef} action={openSessionAction} className="hidden" aria-hidden="true">
+              <input type="hidden" name="caseId" value={pack.caseId} />
+            </form>
+
+            <form action={prepareAction} className="flex flex-wrap items-center gap-2">
+              <input type="hidden" name="caseId" value={pack.caseId} />
+              <input type="hidden" name="recipientGstin" value={pack.recipientGstin} />
+              <input type="hidden" name="subject" value={subject} />
+              <input type="hidden" name="action" value="payment_not_received" />
+              <input type="hidden" name="remarks" value={remarks} />
+              <input type="hidden" name="invoiceRecordCount" value={records} />
+              {attachments.map((a) => (
+                <input key={a} type="hidden" name="attachmentStorageKeys" value={a} />
+              ))}
+              <Button type="submit" disabled={!valid || session !== "idle"}>
                 {session === "opening" ? "Preparing…" : "Open assisted portal session"}
               </Button>
               <Button
+                type="button"
                 variant="outline"
                 disabled={session !== "open"}
-                onClick={() => setSession("sent")}
+                onClick={() => setCaptchaConfirmed(true)}
               >
                 I have completed CAPTCHA &amp; Send
               </Button>
@@ -243,7 +293,7 @@ export function GstScreen({ pack }: { pack: GstPack }) {
                       ? "Session open — human action required"
                       : "Submitted by staff"}
               </Badge>
-            </div>
+            </form>
 
             {sessionUrl ? (
               <p className="text-xs text-muted-foreground">
@@ -258,10 +308,12 @@ export function GstScreen({ pack }: { pack: GstPack }) {
             ) : null}
 
             {session === "sent" || session === "filing" ? (
-              <div className="flex flex-col gap-2">
+              <form action={captureAction} className="flex flex-col gap-2">
+                <input type="hidden" name="caseId" value={pack.caseId} />
                 <Label htmlFor="gst-ref">Portal reference number</Label>
                 <Input
                   id="gst-ref"
+                  name="staffReference"
                   placeholder="e.g. AD0809260001234"
                   value={ref}
                   onChange={(e) => setRef(e.target.value)}
@@ -271,10 +323,10 @@ export function GstScreen({ pack }: { pack: GstPack }) {
                   <Camera className="h-4 w-4" />
                   Confirmation screenshot captured from the session and registered as evidence.
                 </div>
-                <Button disabled={!ref || session === "filing"} onClick={recordFiling}>
+                <Button type="submit" disabled={!ref || session === "filing" || filingSucceeded}>
                   {session === "filing" ? "Recording…" : "Record filing & start 7-day timer"}
                 </Button>
-              </div>
+              </form>
             ) : null}
           </CardContent>
         </Card>

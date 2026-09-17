@@ -6,7 +6,12 @@ import { useFormStatus } from "react-dom";
 import { Upload, FileSpreadsheet, CircleCheck, CircleAlert } from "lucide-react";
 import { reminderComposeSchema } from "@/contract/schemas";
 import type { ImportResult, Organisation } from "@/contract/types";
-import { commitBulkImportAction, validateBulkImportAction } from "@/app/actions/bulk-import";
+import {
+  commitBulkImportAction,
+  validateBulkImportAction,
+  type CommitBulkImportState,
+  type ValidateBulkImportState,
+} from "@/app/actions/bulk-import";
 import { createCaseFromManualInvoiceAction, type CreateManualInvoiceState } from "@/app/actions/manual-invoice";
 import { formatInr } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -208,47 +213,101 @@ function ManualInvoiceForm({ organisationId }: { organisationId: string }) {
 
 /* ------------------------------------------------------ bulk import ---- */
 
+const VALIDATE_BULK_IMPORT_IDLE: ValidateBulkImportState = { result: null, error: null };
+const COMMIT_BULK_IMPORT_IDLE: CommitBulkImportState = { result: null, error: null };
+
+/** Its own useActionState instance, remounted (via the parent's `key`) on
+ * every new file load -- resets the commit result/pending state cleanly
+ * without needing a manual reset API, so committing file A doesn't leave a
+ * stale "Committed" message showing once file B is loaded. */
+function CommitPanel({
+  organisationId,
+  csvText,
+  result,
+}: {
+  organisationId: string;
+  csvText: string;
+  result: ImportResult;
+}) {
+  const [commitState, commitAction] = useActionState<CommitBulkImportState, FormData>(
+    commitBulkImportAction,
+    COMMIT_BULK_IMPORT_IDLE,
+  );
+  const committedCount = commitState.result?.casesCreated ?? null;
+
+  return (
+    <form action={commitAction} className="mt-3 flex items-center gap-3">
+      <input type="hidden" name="organisationId" value={organisationId} readOnly />
+      <input type="hidden" name="csvText" value={csvText} readOnly />
+      <CommitButton validRows={result.validRows} committed={committedCount !== null} />
+      {committedCount !== null ? (
+        <span className="inline-flex items-center gap-1 text-xs text-success">
+          <CircleCheck className="h-3.5 w-3.5" /> {committedCount} draft case
+          {committedCount === 1 ? "" : "s"} created — see Cases
+        </span>
+      ) : null}
+      {commitState.error ? (
+        <span className="flex items-center gap-1.5 text-xs text-danger" role="alert">
+          <CircleAlert className="h-3.5 w-3.5" /> {commitState.error}
+        </span>
+      ) : null}
+    </form>
+  );
+}
+
+function CommitButton({ validRows, committed }: { validRows: number; committed: boolean }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" disabled={validRows === 0 || pending || committed}>
+      {pending ? "Committing…" : committed ? "Committed" : `Commit ${validRows} valid rows`}
+    </Button>
+  );
+}
+
 function BulkImport({ organisationId }: { organisationId: string }) {
-  const [result, setResult] = React.useState<ImportResult | null>(null);
-  const [csvText, setCsvText] = React.useState<string | null>(null);
   const [fileName, setFileName] = React.useState<string | null>(null);
   const [dragOver, setDragOver] = React.useState(false);
+  const [csvText, setCsvText] = React.useState<string | null>(null);
+  const [fileReadError, setFileReadError] = React.useState<string | null>(null);
+  const [fileGeneration, setFileGeneration] = React.useState(0);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const validateFormRef = React.useRef<HTMLFormElement>(null);
+  const csvTextInputRef = React.useRef<HTMLInputElement>(null);
 
-  const [pending, setPending] = React.useState(false);
-  const [committing, setCommitting] = React.useState(false);
-  const [committed, setCommitted] = React.useState<number | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
+  const [validateState, validateAction, validatePending] = useActionState<ValidateBulkImportState, FormData>(
+    validateBulkImportAction,
+    VALIDATE_BULK_IMPORT_IDLE,
+  );
 
   const handleFile = (file: File | undefined) => {
     if (!file) return;
     setFileName(file.name);
-    setCommitted(null);
-    setError(null);
-    setPending(true);
+    setFileReadError(null);
+    setFileGeneration((g) => g + 1);
     file
       .text()
       .then((text) => {
         setCsvText(text);
-        return validateBulkImportAction(text);
+        if (csvTextInputRef.current) csvTextInputRef.current.value = text;
+        validateFormRef.current?.requestSubmit();
       })
-      .then(setResult)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to validate the file"))
-      .finally(() => setPending(false));
+      .catch(() => setFileReadError("Failed to read the selected file"));
   };
 
-  const commit = () => {
-    if (!csvText) return;
-    setCommitting(true);
-    setError(null);
-    commitBulkImportAction(organisationId, csvText)
-      .then((res) => setCommitted(res.casesCreated))
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to commit the import"))
-      .finally(() => setCommitting(false));
-  };
+  const result = validateState.result;
+  const error = fileReadError ?? validateState.error;
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Hidden, auto-submitted right after the selected file's text is
+       * read -- validation has no discrete user submit gesture, but still
+       * goes through the same useActionState/<form action> dispatch as
+       * every other action in this app rather than a direct .then/.catch
+       * call, which is what crashes the client on a thrown server error in
+       * production. */}
+      <form ref={validateFormRef} action={validateAction} className="hidden" aria-hidden="true">
+        <input ref={csvTextInputRef} type="hidden" name="csvText" defaultValue="" />
+      </form>
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -282,7 +341,7 @@ function BulkImport({ organisationId }: { organisationId: string }) {
         />
         {fileName ? (
           <p className="text-xs text-muted-foreground">
-            {pending ? `Validating ${fileName}…` : `Loaded: ${fileName}`}
+            {validatePending ? `Validating ${fileName}…` : `Loaded: ${fileName}`}
           </p>
         ) : null}
         {error ? (
@@ -373,24 +432,9 @@ function BulkImport({ organisationId }: { organisationId: string }) {
                   ))}
                 </TableBody>
               </Table>
-              <div className="mt-3 flex items-center gap-3">
-                <Button
-                  onClick={commit}
-                  disabled={result.validRows === 0 || committing || committed !== null}
-                >
-                  {committing
-                    ? "Committing…"
-                    : committed !== null
-                      ? "Committed"
-                      : `Commit ${result.validRows} valid rows`}
-                </Button>
-                {committed !== null ? (
-                  <span className="inline-flex items-center gap-1 text-xs text-success">
-                    <CircleCheck className="h-3.5 w-3.5" /> {committed} draft case
-                    {committed === 1 ? "" : "s"} created — see Cases
-                  </span>
-                ) : null}
-              </div>
+              {csvText !== null ? (
+                <CommitPanel key={fileGeneration} organisationId={organisationId} csvText={csvText} result={result} />
+              ) : null}
             </CardContent>
           </Card>
         </div>

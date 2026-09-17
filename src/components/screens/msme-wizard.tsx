@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { useActionState } from "react";
+import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Check, Lock, Save, ChevronLeft, ChevronRight, CircleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -14,6 +16,9 @@ import {
   buildMsmePreviewAction,
   captureMsmeAcknowledgementAction,
   saveMsmeStageAction,
+  type BuildMsmePreviewState,
+  type CaptureMsmeAcknowledgementState,
+  type SaveMsmeStageState,
 } from "@/app/actions/msme";
 import type { MsmeStage } from "@/contract/adapters";
 
@@ -46,6 +51,28 @@ export interface MsmeSeed {
   respondentName: string;
   respondentGstin: string;
   claimAmount: string;
+}
+
+const SAVE_MSME_STAGE_IDLE: SaveMsmeStageState = { result: null, error: null };
+const BUILD_MSME_PREVIEW_IDLE: BuildMsmePreviewState = { result: null, error: null };
+const CAPTURE_MSME_ACK_IDLE: CaptureMsmeAcknowledgementState = { result: null, error: null };
+
+function SaveResumeButton({ locked }: { locked: boolean }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button variant="ghost" type="submit" disabled={locked || pending}>
+      <Save className="h-3.5 w-3.5" /> {pending ? "Saving…" : "Save & resume later"}
+    </Button>
+  );
+}
+
+function SubmitFilingButton({ locked }: { locked: boolean }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button type="submit" disabled={locked || pending}>
+      {locked ? "Submitted" : pending ? "Submitting…" : "Submit filing"}
+    </Button>
+  );
 }
 
 function TextField({
@@ -82,18 +109,6 @@ function TextField({
 export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
   const router = useRouter();
   const [step, setStep] = React.useState(0);
-  const [locked, setLocked] = React.useState(false);
-  const [saved, setSaved] = React.useState<string | null>(null);
-  const [saving, setSaving] = React.useState(false);
-  const [preview, setPreview] = React.useState<{ pdfKey: string | null; hash: string | null } | null>(
-    null,
-  );
-  const [submitting, setSubmitting] = React.useState(false);
-  const [acknowledgement, setAcknowledgement] = React.useState<{
-    diaryNumber: string | null;
-    petitionPdfKey: string | null;
-  } | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
   const [showErrors, setShowErrors] = React.useState(false);
   const [data, setData] = React.useState<Data>({
     claimantName: seed.claimantName,
@@ -109,6 +124,58 @@ export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
     documentsList: "Invoices, ledger statement, delivery proof, reminder correspondence",
   });
   const set = (k: string) => (v: string) => setData((d) => ({ ...d, [k]: v }));
+
+  const [saveState, saveAction] = useActionState<SaveMsmeStageState, FormData>(
+    saveMsmeStageAction,
+    SAVE_MSME_STAGE_IDLE,
+  );
+  const [previewState, previewAction] = useActionState<BuildMsmePreviewState, FormData>(
+    buildMsmePreviewAction,
+    BUILD_MSME_PREVIEW_IDLE,
+  );
+  const [ackState, ackAction] = useActionState<CaptureMsmeAcknowledgementState, FormData>(
+    captureMsmeAcknowledgementAction,
+    CAPTURE_MSME_ACK_IDLE,
+  );
+
+  const previewFormRef = React.useRef<HTMLFormElement>(null);
+  const lastAckResultRef = React.useRef<CaptureMsmeAcknowledgementState["result"]>(null);
+
+  // Derived, not state-in-effect: `saved`/`locked` follow directly from the
+  // action states useActionState already tracks, so there's nothing to
+  // synchronize by hand (and no setState-in-effect for this project's
+  // stricter React Compiler-oriented lint rules to flag). The one genuine
+  // side effect -- refreshing the router once a filing is truly
+  // acknowledged -- stays in its own effect below.
+  const saved = saveState.result !== null;
+  const locked = !!ackState.result?.diaryNumber;
+
+  React.useEffect(() => {
+    if (ackState.result && ackState.result !== lastAckResultRef.current) {
+      lastAckResultRef.current = ackState.result;
+      if (ackState.result.diaryNumber) {
+        router.refresh();
+      }
+    }
+  }, [ackState.result, router]);
+
+  const preview = previewState.result;
+  const acknowledgement =
+    ackState.result?.diaryNumber
+      ? { diaryNumber: ackState.result.diaryNumber, petitionPdfKey: ackState.result.petitionPdfKey }
+      : null;
+  // Distinguishes a genuine thrown/authorization failure (state.error) from
+  // the legitimate "submitted, but the portal didn't return a diary number"
+  // business outcome (result present with a null diaryNumber) -- neither is
+  // a crash, but they're different situations for the operator.
+  const ackBusinessFailure = ackState.result && !ackState.result.diaryNumber;
+  const error =
+    saveState.error ??
+    previewState.error ??
+    ackState.error ??
+    (ackBusinessFailure
+      ? "Submission did not return a diary number -- check Audit / Security for the failure reason."
+      : null);
 
   const requiredByStep: Record<number, string[]> = {
     0: ["claimantName", "claimantUdyam", "claimantAddress"],
@@ -131,9 +198,7 @@ export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
     const nextStep = Math.min(step + 1, STAGES.length - 1);
     setStep(nextStep);
     if (STAGE_KEYS[nextStep] === "preview") {
-      buildMsmePreviewAction(seed.caseId)
-        .then((res) => setPreview({ pdfKey: res.previewPdfKey, hash: res.previewHash }))
-        .catch(() => setError("Failed to build the preview snapshot"));
+      previewFormRef.current?.requestSubmit();
     }
   };
   const prev = () => {
@@ -141,36 +206,18 @@ export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
     setStep((s) => Math.max(s - 1, 0));
   };
 
-  const saveAndResume = () => {
-    setSaving(true);
-    setError(null);
-    saveMsmeStageAction(seed.caseId, STAGE_KEYS[step], data)
-      .then(() => setSaved(new Date().toLocaleTimeString("en-IN")))
-      .catch(() => setError("Failed to save this stage"))
-      .finally(() => setSaving(false));
-  };
-
-  const submit = () => {
-    setSubmitting(true);
-    setError(null);
-    captureMsmeAcknowledgementAction(seed.caseId)
-      .then((res) => {
-        if (!res.diaryNumber) {
-          setError(
-            "Submission did not return a diary number -- check Audit / Security for the failure reason.",
-          );
-          return;
-        }
-        setAcknowledgement({ diaryNumber: res.diaryNumber, petitionPdfKey: res.petitionPdfKey });
-        setLocked(true);
-        router.refresh();
-      })
-      .catch(() => setError("Failed to submit the filing"))
-      .finally(() => setSubmitting(false));
-  };
-
   return (
     <div className="flex flex-col gap-5">
+      {/* Hidden, auto-submitted when the wizard advances into the Preview
+       * stage -- there is no discrete user click for this one, but it must
+       * still go through the same useActionState/<form action> dispatch as
+       * every other action in this app rather than a direct .then/.catch
+       * call, which is what crashes the client on a thrown server error in
+       * production. */}
+      <form ref={previewFormRef} action={previewAction} className="hidden" aria-hidden="true">
+        <input type="hidden" name="caseId" value={seed.caseId} />
+      </form>
+
       {/* Evidence gate */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
@@ -322,9 +369,9 @@ export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
               ))}
               {preview ? (
                 <div className="mt-2 border-t border-border pt-2 text-xs text-muted-foreground">
-                  Preview snapshot: <span className="font-mono">{preview.pdfKey}</span>
+                  Preview snapshot: <span className="font-mono">{preview.previewPdfKey}</span>
                   <br />
-                  Hash: <span className="font-mono">{preview.hash}</span>
+                  Hash: <span className="font-mono">{preview.previewHash}</span>
                 </div>
               ) : null}
               {acknowledgement ? (
@@ -352,16 +399,18 @@ export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
             Next <ChevronRight className="h-3.5 w-3.5" />
           </Button>
         ) : (
-          <Button onClick={submit} disabled={locked || submitting}>
-            {locked ? "Submitted" : submitting ? "Submitting…" : "Submit filing"}
-          </Button>
+          <form action={ackAction}>
+            <input type="hidden" name="caseId" value={seed.caseId} />
+            <SubmitFilingButton locked={locked} />
+          </form>
         )}
-        <Button variant="ghost" onClick={saveAndResume} disabled={locked || saving}>
-          <Save className="h-3.5 w-3.5" /> {saving ? "Saving…" : "Save & resume later"}
-        </Button>
-        {saved ? (
-          <span className="text-xs text-muted-foreground">Draft saved at {saved}</span>
-        ) : null}
+        <form action={saveAction}>
+          <input type="hidden" name="caseId" value={seed.caseId} />
+          <input type="hidden" name="stage" value={STAGE_KEYS[step]} />
+          <input type="hidden" name="payload" value={JSON.stringify(data)} />
+          <SaveResumeButton locked={locked} />
+        </form>
+        {saved ? <span className="text-xs text-muted-foreground">Draft saved.</span> : null}
         {locked ? <Badge tone="success">Filing locked</Badge> : null}
         {error ? (
           <span className="flex items-center gap-1.5 text-xs text-danger" role="alert">
