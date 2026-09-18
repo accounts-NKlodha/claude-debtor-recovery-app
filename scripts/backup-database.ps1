@@ -81,7 +81,21 @@ function Write-Log($msg) {
 
 function Fail($msg) {
     Write-Log "FAILURE: $msg"
-    Write-Error $msg
+    # -ErrorAction Continue: print the message without letting the global
+    # `$ErrorActionPreference = "Stop"` turn THIS Write-Error itself into a
+    # terminating exception. Under Stop, an unqualified Write-Error here
+    # would throw before ever reaching the exit 1 below -- harmless at the
+    # very top level (an uncaught terminating error still yields a non-zero
+    # process exit in this PowerShell version, confirmed), but the P1
+    # backup-reliability fix wraps the rest of this script in a try/catch,
+    # and a Fail() call from inside that try would have its Write-Error
+    # caught by that same catch block, which calls Fail() again -- a
+    # confusing double "FAILURE:" log entry for one real failure. Exiting
+    # explicitly and deterministically here, rather than relying on
+    # whatever PowerShell's own default uncaught-error handling happens to
+    # do, is also simply the more correct way to guarantee "failure always
+    # means a non-zero process exit" instead of an unwritten assumption.
+    Write-Error $msg -ErrorAction Continue
     if ($mutexAcquired) { $mutex.ReleaseMutex() | Out-Null }
     exit 1
 }
@@ -99,6 +113,19 @@ if (-not $mutexAcquired) {
 }
 
 Write-Log "Backup run starting for project $ProjectRef"
+
+# P1 backup-reliability closure: everything from here to the normal exit 0
+# is wrapped in one top-level try/catch. Every failure mode already named
+# above (Docker down, CLI-link mismatch, dump failure, missing/empty
+# output) already calls Fail() explicitly and so is unaffected by this
+# wrapper. This outer catch exists for the failure modes that did NOT
+# already have an explicit check -- checksum generation (Get-FileHash/
+# Set-Content below) and any other genuinely unexpected error -- so that
+# NO exception path can ever fall through to PowerShell's own default
+# uncaught-error handling and risk an ambiguous/inconsistent process exit
+# code. Every path out of this script must be an explicit Fail() (exit 1)
+# or the explicit exit 0 at the very end; nothing is left to chance.
+try {
 
 # 1. Docker must be running -- `supabase db dump` runs pg_dump in a container.
 try {
@@ -186,6 +213,16 @@ Write-Host ""
 Write-Host "Both files are in .\backups\, which is gitignored -- they will never be committed."
 Write-Host "Restore schema first, then data (see docs/disaster-recovery/index.md)."
 Write-Host "Copy them off-site per the retention policy; do not leave the only copy on this machine."
+
+}
+catch {
+    # Catch-all safety net (see the comment above the opening `try`) -- the
+    # exception message is logged for diagnosis but, like every other Fail()
+    # call in this script, no credential/token/password is ever an input to
+    # this script in the first place, so there is nothing secret to leak
+    # here even in an unanticipated failure.
+    Fail "Unexpected script failure: $($_.Exception.Message)"
+}
 
 $mutex.ReleaseMutex() | Out-Null
 exit 0

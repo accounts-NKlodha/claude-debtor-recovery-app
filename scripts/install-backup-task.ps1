@@ -1,8 +1,10 @@
 <#
 .SYNOPSIS
   Registers (or updates) the "DebtorRecovery-Production-Backup" Windows
-  Task Scheduler task, which runs backup-database.ps1 then
-  backup-retention.ps1 daily. See docs/disaster-recovery/index.md.
+  Task Scheduler task, which runs run-scheduled-backup.ps1 daily (which in
+  turn runs backup-database.ps1 then backup-retention.ps1, as one action
+  so Task Scheduler's Last Run Result is never masked by retention's
+  separate, always-succeeds exit code). See docs/disaster-recovery/index.md.
 
 .DESCRIPTION
   Deliberately does NOT run as SYSTEM and does NOT store a Windows account
@@ -75,9 +77,11 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $backupScript = Join-Path $repoRoot "scripts\backup-database.ps1"
 $retentionScript = Join-Path $repoRoot "scripts\backup-retention.ps1"
+$wrapperScript = Join-Path $repoRoot "scripts\run-scheduled-backup.ps1"
 
 if (-not (Test-Path $backupScript)) { throw "Not found: $backupScript" }
 if (-not (Test-Path $retentionScript)) { throw "Not found: $retentionScript" }
+if (-not (Test-Path $wrapperScript)) { throw "Not found: $wrapperScript" }
 
 $currentUser = "$env:USERDOMAIN\$env:USERNAME"
 Write-Host "This will register/update scheduled task '$TaskName' to run daily at $At"
@@ -85,26 +89,27 @@ Write-Host "as the current user ($currentUser), only while that user is logged o
 Write-Host "No password will be requested or stored by this script."
 Write-Host ""
 
-# Action 1: the backup itself. -NoProfile/-NonInteractive: never wait on a
-# prompt. -ExecutionPolicy Bypass: scoped to this one process invocation
-# only (does not change the machine/user execution policy). Working
-# directory explicitly set to the repo root so relative resolution (e.g.
-# `npx`, node_modules) behaves exactly as it does in an interactive shell
-# run from the repo root.
+# ONE action, not two (P1 backup-reliability closure). This task previously
+# registered backup-database.ps1 and backup-retention.ps1 as two SEPARATE
+# Task Scheduler actions. Windows records a multi-action task's overall
+# "Last Run Result" as the result of the LAST action only -- not an
+# aggregate -- and backup-retention.ps1 always exits 0 when it runs at all
+# (it only prunes checksum-verified complete sets and always keeps at
+# least one). So whenever the backup action failed (e.g. Docker not
+# running) but retention still ran afterward, Task Scheduler recorded the
+# run as successful, silently masking the real failure -- confirmed live
+# via a Docker-down run whose log showed "FAILURE: Docker is not running"
+# immediately followed by a normal "Retention complete" line, while
+# Get-ScheduledTaskInfo's LastTaskResult for that same run was 0.
+#
+# run-scheduled-backup.ps1 runs both steps (as genuine child processes,
+# preserving the existing "retention still runs even if the backup failed"
+# behavior) and exits with ONE code that always reflects the backup's own
+# result first -- so the task's single action, and therefore Task
+# Scheduler's LastTaskResult, can never again disagree with reality.
 $backupAction = New-ScheduledTaskAction `
     -Execute "powershell.exe" `
-    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$backupScript`" -ProjectRef $ProjectRef" `
-    -WorkingDirectory "$repoRoot"
-
-# Action 2: retention, run after the backup action (Task Scheduler runs a
-# task's actions in the order listed). If the backup action failed, its
-# non-zero exit does not stop the retention action from running -- that's
-# fine, since backup-retention.ps1 only ever prunes checksum-verified
-# complete sets and always keeps at least one, so it cannot compound a
-# failed backup into data loss.
-$retentionAction = New-ScheduledTaskAction `
-    -Execute "powershell.exe" `
-    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$retentionScript`"" `
+    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$wrapperScript`" -ProjectRef $ProjectRef" `
     -WorkingDirectory "$repoRoot"
 
 $trigger = New-ScheduledTaskTrigger -Daily -At $At
@@ -125,7 +130,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -RestartInterval (New-TimeSpan -Minutes 15) `
     -ExecutionTimeLimit (New-TimeSpan -Hours 2)
 
-$task = New-ScheduledTask -Action @($backupAction, $retentionAction) -Trigger $trigger -Principal $principal -Settings $settings -Description "Daily production Supabase logical backup (schema+data) + retention pruning for Debtrecover. See docs/disaster-recovery/index.md. Runs as $currentUser while logged on; no secrets stored by this task."
+$task = New-ScheduledTask -Action @($backupAction) -Trigger $trigger -Principal $principal -Settings $settings -Description "Daily production Supabase logical backup (schema+data) + retention pruning for Debtrecover, via run-scheduled-backup.ps1 (single action so Task Scheduler's Last Run Result always reflects the backup's own outcome). See docs/disaster-recovery/index.md. Runs as $currentUser while logged on; no secrets stored by this task."
 
 if ($PSCmdlet.ShouldProcess($TaskName, "Register/update scheduled task")) {
     Register-ScheduledTask -TaskName $TaskName -InputObject $task -Force | Out-Null
