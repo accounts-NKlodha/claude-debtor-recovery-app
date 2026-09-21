@@ -637,7 +637,7 @@ describe("hearing.ts / ocr.ts / manual-invoice.ts / bulk-import.ts: authenticate
     const { sendInitialReminderAction } = await import("./reminders");
     const org = mock.insertOrganisation({
       id: "org-security-test-reminder", clientCode: "NKL-SECTEST-REM", legalEntityName: "Security Test Reminder Co",
-      creditorGstin: null, udyamNumber: null, jitoMember: false, createdAt: new Date().toISOString(),
+      creditorGstin: null, udyamNumber: null, jitoMember: false, upiId: null, upiPayeeName: null, createdAt: new Date().toISOString(),
     });
     const debtor = mock.insertDebtor({
       id: "deb-security-test-reminder", organisationId: org.id, name: "Security Test Debtor",

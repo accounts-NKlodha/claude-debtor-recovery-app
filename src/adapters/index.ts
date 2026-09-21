@@ -12,10 +12,20 @@
  * production must never silently degrade to fake sends. Outside
  * production, `ADAPTER_PROFILE=live` opts a developer into the real
  * adapter locally (e.g. for the one-off live-send acceptance test); the
- * default outside production remains the mock. Every other capability
- * (whatsapp, gstPortal, msmePortal, ocr, ...) has no real provider yet and
- * stays mocked regardless of profile/environment -- implementing those is
- * explicitly out of scope for the email-delivery task.
+ * default outside production remains the mock.
+ *
+ * `whatsapp` (AiSensy WhatsApp production integration task) is fail-closed
+ * the OTHER way round from email: it defaults to the mock EVEN IN
+ * PRODUCTION. An operator must explicitly set WHATSAPP_PROVIDER=aisensy to
+ * go live -- forgetting to set it must never accidentally enable real
+ * WhatsApp sends, since (unlike email) WhatsApp production readiness is
+ * gated on a controlled live test and a per-template human sign-off, not
+ * just secret configuration. Missing/malformed AiSensy configuration once
+ * WHATSAPP_PROVIDER=aisensy IS set fails closed inside the adapter itself
+ * (src/lib/config/aisensy.ts) -- never a silent fallback to a fake success.
+ *
+ * Every other capability (gstPortal, msmePortal, ocr, ...) has no real
+ * provider yet and stays mocked regardless of profile/environment.
  */
 
 import type {
@@ -29,6 +39,7 @@ import type {
 } from "@/contract/adapters";
 import { isProductionRuntime } from "@/lib/config/production";
 import { gmailSmtp } from "./gmail-smtp";
+import { aiSensyWhatsApp } from "./aisensy";
 import {
   mockCalendar,
   mockGmail,
@@ -41,6 +52,7 @@ import {
 } from "./mock";
 
 const provider = process.env.ADAPTER_PROFILE ?? "mock";
+const whatsappProvider = process.env.WHATSAPP_PROVIDER ?? "disabled";
 
 export interface AdapterSet {
   whatsapp: MessagingAdapter;
@@ -64,8 +76,21 @@ const mockSet: AdapterSet = {
   paymentGateway: mockPaymentGateway,
 };
 
+/** Whether the real AiSensy WhatsApp adapter is the one `getAdapters()`
+ * returns right now -- repository callers use this (rather than duplicating
+ * the WHATSAPP_PROVIDER check) to decide whether to attempt a real
+ * production WhatsApp send at all, e.g. before checking the kill switch or
+ * normalizing a destination number. */
+export function isLiveWhatsAppConfigured(): boolean {
+  return whatsappProvider === "aisensy";
+}
+
 export function getAdapters(): AdapterSet {
   const useLiveEmail = isProductionRuntime() || provider === "live";
-  if (!useLiveEmail) return mockSet;
-  return { ...mockSet, email: gmailSmtp };
+  const useLiveWhatsApp = whatsappProvider === "aisensy";
+  return {
+    ...mockSet,
+    email: useLiveEmail ? gmailSmtp : mockGmail,
+    whatsapp: useLiveWhatsApp ? aiSensyWhatsApp : mockWhatsApp,
+  };
 }

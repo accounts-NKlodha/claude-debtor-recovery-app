@@ -23,6 +23,22 @@ export function istParts(date: Date) {
   };
 }
 
+/**
+ * The IST calendar date (YYYY-MM-DD) of an instant -- the application's
+ * business date. Payment/promise/"today" dates for this India-based product
+ * are always IST dates, never the UTC date (which differs from 00:00 to
+ * 05:30 IST every day).
+ */
+export function istBusinessDate(date: Date): string {
+  const p = istParts(date);
+  return `${p.year}-${String(p.month + 1).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+}
+
+/** Whole calendar days from IST date `from` to IST date `to` (both YYYY-MM-DD). */
+export function istDaysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+}
+
 /** UTC Date for a given IST wall-clock instant. */
 export function istWallClockToUtc(
   year: number,

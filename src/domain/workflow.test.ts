@@ -73,13 +73,39 @@ describe("workflow state machine", () => {
     }
   });
 
-  it("routes GST-eligible cases to GST prep after 24h silence", () => {
+  it("24h silence after the initial reminder makes the follow-up due but does NOT jump to GST review", () => {
+    const s: WorkflowState = { ...initialState(1), status: "initial_communication_sent" };
+    const t = advance(s, { type: "TIMER_24H_ELAPSED" });
+    expect(t.next.status).toBe("initial_communication_sent");
+    expect(t.next.waitingOn).toBe("staff");
+    expect(t.next.blocker).toMatch(/follow-up reminder due/i);
+    expect(t.effect).toBeNull();
+  });
+
+  it("an operator-sent follow-up moves to follow_up_sent and starts the second 24h window", () => {
+    const s: WorkflowState = { ...initialState(1), status: "initial_communication_sent" };
+    const t = advance(s, { type: "FOLLOW_UP_SENT" });
+    expect(t.next.status).toBe("follow_up_sent");
+    expect(t.next.waitingOn).toBe("system");
+    expect(t.effect).toEqual({ kind: "start_timer", timer: "reminder_24h" });
+  });
+
+  it("GST eligibility review only follows silence AFTER the follow-up, then routes to GST prep", () => {
     let s: WorkflowState = { ...initialState(1), status: "initial_communication_sent" };
+    s = advance(s, { type: "TIMER_24H_ELAPSED" }).next;
+    s = advance(s, { type: "FOLLOW_UP_SENT" }).next;
     s = advance(s, { type: "TIMER_24H_ELAPSED" }).next;
     expect(s.status).toBe("gst_eligibility_review");
     const decided = advance(s, { type: "GST_ELIGIBILITY_DECIDED", route: "gst" });
     expect(decided.next.status).toBe("gst_notification_prepared");
     expect(decided.effect).toEqual({ kind: "prepare_gst" });
+  });
+
+  it("a reply or a confirmed payment during the follow-up window is handled like any waiting state", () => {
+    const s: WorkflowState = { ...initialState(100_00), status: "follow_up_sent", principalOutstanding: 100_00 };
+    expect(advance(s, { type: "REPLY_CLASSIFIED", classification: "promise_to_pay" }).next.status).toBe("promise_to_pay");
+    expect(advance(s, { type: "REPLY_CLASSIFIED", classification: "payment_made" }).next.status).toBe("payment_confirmation_required");
+    expect(advance(s, { type: "PAYMENT_CONFIRMED", fullSettlement: true }).next.status).toBe("recovered");
   });
 
   it("GST 7-day timer starts only after filing", () => {

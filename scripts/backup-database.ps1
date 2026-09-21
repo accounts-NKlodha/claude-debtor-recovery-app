@@ -128,12 +128,30 @@ Write-Log "Backup run starting for project $ProjectRef"
 try {
 
 # 1. Docker must be running -- `supabase db dump` runs pg_dump in a container.
-try {
-    docker info *> $null
-    if ($LASTEXITCODE -ne 0) { throw "docker info exited $LASTEXITCODE" }
+#    Reliability fix (go-live review): the 19 Sept scheduled run failed simply
+#    because Docker Desktop was not running at 23:30. If it is down, start
+#    Docker Desktop and wait (up to 5 minutes) for the engine before failing.
+function Test-DockerReady {
+    try {
+        docker info *> $null
+        return ($LASTEXITCODE -eq 0)
+    }
+    catch { return $false }
 }
-catch {
-    Fail "Docker is not running. Start Docker Desktop, wait for it to be ready, then re-run this script. (supabase db dump requires Docker; no database password is used by this script either way.)"
+if (-not (Test-DockerReady)) {
+    $dockerExe = @(
+        "C:\Program Files\Docker\Docker\Docker Desktop.exe",
+        (Join-Path $env:LOCALAPPDATA "Programs\Docker\Docker\Docker Desktop.exe")
+    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($dockerExe) {
+        Write-Log "Docker is not running -- starting Docker Desktop and waiting up to 5 minutes for the engine."
+        Start-Process $dockerExe
+        $deadline = (Get-Date).AddMinutes(5)
+        while (-not (Test-DockerReady) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 10 }
+    }
+}
+if (-not (Test-DockerReady)) {
+    Fail "Docker is not running and could not be started. Start Docker Desktop, wait for it to be ready, then re-run this script. (supabase db dump requires Docker; no database password is used by this script either way.)"
 }
 
 # 2. Confirm the CLI is actually linked to the project we intend to back up

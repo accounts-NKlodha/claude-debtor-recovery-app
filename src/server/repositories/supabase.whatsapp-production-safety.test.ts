@@ -11,8 +11,9 @@
  * production, only outside it (where the mock remains an explicit,
  * understood demo/test affordance).
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MutationActor } from "@/lib/auth/types";
+import { WHATSAPP_MESSAGE_KINDS, WHATSAPP_TEMPLATES } from "@/domain/whatsapp-templates";
 
 vi.mock("server-only", () => ({}));
 
@@ -25,6 +26,9 @@ const ORG_ROW = {
   creditor_gstin: null,
   udyam_number: null,
   jito_member: false,
+  is_firm: false,
+  upi_id: "acme@upi",
+  upi_payee_name: "Acme Textiles Payee",
   created_at: "2026-01-01T00:00:00Z",
 };
 
@@ -38,6 +42,25 @@ const DEBTOR_ROW = {
   address: null,
   contact_verified: false,
   total_due: 100000,
+};
+
+const INVOICE_ROW = {
+  id: "inv-1",
+  organisation_id: "org-1",
+  case_id: "case-1",
+  debtor_id: "debtor-1",
+  invoice_number: "INV-1024",
+  invoice_date: "2026-08-01",
+  due_date: "2026-09-18",
+  taxable_value: 100000,
+  tax_rate: 0,
+  tax_amount: 0,
+  invoice_total: 100000,
+  outstanding_balance: 100000,
+  currency: "INR",
+  source_document_id: null,
+  extraction_confidence: null,
+  created_at: "2026-01-01T00:00:00Z",
 };
 
 const CASE_ROW = {
@@ -99,14 +122,19 @@ function deliveryRow(channel: "whatsapp" | "email") {
 }
 
 /** Minimal fake Supabase client -- same shape as supabase.test.ts's harness. */
-function buildFakeSupabase(rpcResponses: Record<string, { data?: unknown; error?: { message: string } | null }>) {
+function buildFakeSupabase(
+  rpcResponses: Record<string, { data?: unknown; error?: { message: string } | null }>,
+  options: { automationEnabled?: boolean; org?: Record<string, unknown>; debtor?: Record<string, unknown> } = {},
+) {
   const rpcCalls: { fn: string; args: Record<string, unknown> }[] = [];
   const fromResponses: Record<string, { data: unknown; error: null }> = {
-    organisations: { data: ORG_ROW, error: null },
-    debtors: { data: DEBTOR_ROW, error: null },
+    organisations: { data: { ...ORG_ROW, ...options.org }, error: null },
+    debtors: { data: { ...DEBTOR_ROW, ...options.debtor }, error: null },
     recovery_cases: { data: CASE_ROW, error: null },
-    invoices: { data: [], error: null },
+    invoices: { data: [INVOICE_ROW], error: null },
     communication_deliveries: { data: [], error: null },
+    communications: { data: [], error: null },
+    system_settings: { data: { value_json: { enabled: options.automationEnabled ?? true } }, error: null },
   };
   const client = {
     rpc: vi.fn((fn: string, args: unknown) => {
@@ -132,10 +160,16 @@ function buildFakeSupabase(rpcResponses: Record<string, { data?: unknown; error?
 
 const fakeEmailAdapter = { name: "fake-email", send: vi.fn() };
 const fakeWhatsappAdapter = { name: "fake-whatsapp", send: vi.fn() };
+const isLiveWhatsAppConfiguredMock = vi.fn(() => false);
 
 vi.mock("@/adapters", () => ({
   getAdapters: () => ({ email: fakeEmailAdapter, whatsapp: fakeWhatsappAdapter }),
+  isLiveWhatsAppConfigured: () => isLiveWhatsAppConfiguredMock(),
 }));
+
+beforeEach(() => {
+  for (const k of WHATSAPP_MESSAGE_KINDS) vi.stubEnv(WHATSAPP_TEMPLATES[k].campaignEnvVar, `Test Campaign ${k}`);
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -143,6 +177,8 @@ afterEach(() => {
   vi.unstubAllEnvs();
   fakeEmailAdapter.send.mockReset();
   fakeWhatsappAdapter.send.mockReset();
+  isLiveWhatsAppConfiguredMock.mockReset();
+  isLiveWhatsAppConfiguredMock.mockReturnValue(false);
 });
 
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
@@ -240,4 +276,216 @@ describe("SupabaseRepository.sendInitialReminder: WhatsApp production safety", (
     expect(channelsRequested).toContain("whatsapp");
     expect(fakeWhatsappAdapter.send).toHaveBeenCalledTimes(1);
   });
+
+  it("in production with WHATSAPP_PROVIDER=aisensy configured, payment details set and the kill switch on, WhatsApp is attempted with the 8 approved V2 template params and the real adapter's name is persisted as the provider", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    isLiveWhatsAppConfiguredMock.mockReturnValue(true);
+    fakeEmailAdapter.send.mockResolvedValue({
+      outcome: "success",
+      providerRef: "<real-email-ref@mail.nklodha.in>",
+      errorCode: null,
+      evidenceRefs: [],
+      nextAction: null,
+      data: { providerMessageId: "<real-email-ref@mail.nklodha.in>" },
+    });
+    fakeWhatsappAdapter.send.mockResolvedValue({
+      outcome: "success",
+      providerRef: "real-wamid-123",
+      errorCode: null,
+      evidenceRefs: [],
+      nextAction: null,
+      data: { providerMessageId: "real-wamid-123" },
+    });
+
+    const { client, rpcCalls } = buildFakeSupabase(
+      {
+        begin_communication_send: { data: { communication: communicationRow("whatsapp", "queued"), isNew: true }, error: null },
+        begin_delivery_attempt: { data: { blocked: false, blockedReason: null, delivery: deliveryRow("whatsapp") }, error: null },
+        complete_delivery_attempt: {
+          data: { delivery: { ...deliveryRow("whatsapp"), status: "sent" }, communication: communicationRow("whatsapp", "sent") },
+          error: null,
+        },
+        apply_case_mutation: { data: { ...CASE_ROW, status: "initial_communication_sent" }, error: null },
+      },
+      { automationEnabled: true },
+    );
+    const createClient = await mockedCreateClient();
+    createClient.mockResolvedValue(client);
+
+    const { SupabaseRepository } = await import("./supabase");
+    const repo = new SupabaseRepository();
+    await repo.sendInitialReminder("case-1", ACTOR);
+
+    expect(fakeWhatsappAdapter.send).toHaveBeenCalledTimes(1);
+    const sendArgs = fakeWhatsappAdapter.send.mock.calls[0][0];
+    expect(sendArgs.templateParams).toBeInstanceOf(Array);
+    expect(sendArgs.templateParams).toEqual([
+      "Debtor Co",
+      "INV-1024",
+      " 1,000",
+      "18 September 2026",
+      " 1,000",
+      "Acme Textiles",
+      "acme@upi",
+      "Acme Textiles Payee",
+    ]);
+    expect(sendArgs.templateKey).toBe("payment_reminder_initial_v2");
+    expect(sendArgs.to).toBe(DEBTOR_ROW.mobile);
+
+    const completeCalls = rpcCalls.filter((c) => c.fn === "complete_delivery_attempt");
+    const whatsappComplete = completeCalls.find((c) => (c.args as { p_delivery_id: string }).p_delivery_id === "delivery-whatsapp");
+    expect(whatsappComplete?.args.p_provider).toBe("fake-whatsapp");
+  });
+
+  it("kill switch behavior: in production with WHATSAPP_PROVIDER=aisensy configured but the global automation kill switch off, WhatsApp is skipped (not attempted, not failed) and only email is sent", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    isLiveWhatsAppConfiguredMock.mockReturnValue(true);
+    fakeEmailAdapter.send.mockResolvedValue({
+      outcome: "success",
+      providerRef: "<real-email-ref@mail.nklodha.in>",
+      errorCode: null,
+      evidenceRefs: [],
+      nextAction: null,
+      data: { providerMessageId: "<real-email-ref@mail.nklodha.in>" },
+    });
+
+    const { client, rpcCalls } = buildFakeSupabase(
+      {
+        begin_communication_send: { data: { communication: communicationRow("email", "queued"), isNew: true }, error: null },
+        begin_delivery_attempt: { data: { blocked: false, blockedReason: null, delivery: deliveryRow("email") }, error: null },
+        complete_delivery_attempt: {
+          data: { delivery: { ...deliveryRow("email"), status: "sent" }, communication: communicationRow("email", "sent") },
+          error: null,
+        },
+        apply_case_mutation: { data: { ...CASE_ROW, status: "initial_communication_sent" }, error: null },
+      },
+      { automationEnabled: false },
+    );
+    const createClient = await mockedCreateClient();
+    createClient.mockResolvedValue(client);
+
+    const { SupabaseRepository } = await import("./supabase");
+    const repo = new SupabaseRepository();
+    const result = await repo.sendInitialReminder("case-1", ACTOR);
+
+    expect(fakeWhatsappAdapter.send).not.toHaveBeenCalled();
+    const channelsRequested = rpcCalls.filter((c) => c.fn === "begin_communication_send").map((c) => c.args.p_channel);
+    expect(channelsRequested).toEqual(["email"]);
+    expect(result.communications).toHaveLength(1);
+  });
+
+  it("phone normalization: in production with WHATSAPP_PROVIDER=aisensy configured, an unnormalizable debtor mobile number skips WhatsApp instead of guessing a destination", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    isLiveWhatsAppConfiguredMock.mockReturnValue(true);
+    fakeEmailAdapter.send.mockResolvedValue({
+      outcome: "success",
+      providerRef: "<real-email-ref@mail.nklodha.in>",
+      errorCode: null,
+      evidenceRefs: [],
+      nextAction: null,
+      data: { providerMessageId: "<real-email-ref@mail.nklodha.in>" },
+    });
+
+    const { client, rpcCalls } = buildFakeSupabase(
+      {
+        begin_communication_send: { data: { communication: communicationRow("email", "queued"), isNew: true }, error: null },
+        begin_delivery_attempt: { data: { blocked: false, blockedReason: null, delivery: deliveryRow("email") }, error: null },
+        complete_delivery_attempt: {
+          data: { delivery: { ...deliveryRow("email"), status: "sent" }, communication: communicationRow("email", "sent") },
+          error: null,
+        },
+        apply_case_mutation: { data: { ...CASE_ROW, status: "initial_communication_sent" }, error: null },
+      },
+      { automationEnabled: true },
+    );
+    // Override the debtor row with a malformed mobile number for this test only.
+    const originalFrom = client.from;
+    client.from = vi.fn((table: string) => {
+      if (table === "debtors") {
+        const builder = {
+          select: () => builder,
+          eq: () => builder,
+          order: () => builder,
+          limit: () => builder,
+          maybeSingle: () => Promise.resolve({ data: { ...DEBTOR_ROW, mobile: "12345" }, error: null }),
+          then: (resolve: (v: unknown) => unknown) => Promise.resolve({ data: { ...DEBTOR_ROW, mobile: "12345" }, error: null }).then(resolve),
+        };
+        return builder;
+      }
+      return originalFrom(table);
+    });
+    const createClient = await mockedCreateClient();
+    createClient.mockResolvedValue(client);
+
+    const { SupabaseRepository } = await import("./supabase");
+    const repo = new SupabaseRepository();
+    const result = await repo.sendInitialReminder("case-1", ACTOR);
+
+    expect(fakeWhatsappAdapter.send).not.toHaveBeenCalled();
+    const channelsRequested = rpcCalls.filter((c) => c.fn === "begin_communication_send").map((c) => c.args.p_channel);
+    expect(channelsRequested).toEqual(["email"]);
+    expect(result.communications).toHaveLength(1);
+  });
+
+  it("missing payment details: WhatsApp is not sent (no adapter call, no communication row) but email still is, and the operator gets a controlled warning", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    isLiveWhatsAppConfiguredMock.mockReturnValue(true);
+    fakeEmailAdapter.send.mockResolvedValue({
+      outcome: "success", providerRef: "<e@mail>", errorCode: null, evidenceRefs: [], nextAction: null,
+      data: { providerMessageId: "<e@mail>" },
+    });
+    const { client, rpcCalls } = buildFakeSupabase(
+      {
+        begin_communication_send: { data: { communication: communicationRow("email", "queued"), isNew: true }, error: null },
+        begin_delivery_attempt: { data: { blocked: false, blockedReason: null, delivery: deliveryRow("email") }, error: null },
+        complete_delivery_attempt: {
+          data: { delivery: { ...deliveryRow("email"), status: "sent" }, communication: communicationRow("email", "sent") },
+          error: null,
+        },
+        apply_case_mutation: { data: { ...CASE_ROW, status: "initial_communication_sent" }, error: null },
+      },
+      { automationEnabled: true, org: { upi_id: null, upi_payee_name: null } },
+    );
+    const createClient = await mockedCreateClient();
+    createClient.mockResolvedValue(client);
+
+    const { SupabaseRepository } = await import("./supabase");
+    const result = await new SupabaseRepository().sendInitialReminder("case-1", ACTOR);
+
+    expect(fakeWhatsappAdapter.send).not.toHaveBeenCalled();
+    expect(rpcCalls.filter((c) => c.fn === "begin_communication_send").map((c) => c.args.p_channel)).toEqual(["email"]);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatch(/WhatsApp reminder not sent/);
+    expect(result.warnings[0]).toMatch(/payment details \(UPI ID and UPI payee name\) are not configured/);
+  });
+
+  it("missing payment details and no other channel: throws a controlled operator error naming the missing configuration, sends and records nothing", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    isLiveWhatsAppConfiguredMock.mockReturnValue(true);
+    const { client, rpcCalls } = buildFakeSupabase({}, { automationEnabled: true, org: { upi_id: null, upi_payee_name: null }, debtor: { email: null } });
+    const createClient = await mockedCreateClient();
+    createClient.mockResolvedValue(client);
+
+    const { SupabaseRepository } = await import("./supabase");
+    await expect(new SupabaseRepository().sendInitialReminder("case-1", ACTOR)).rejects.toThrow(
+      /WhatsApp reminder not sent: the creditor's payment details \(UPI ID and UPI payee name\) are not configured/,
+    );
+    expect(fakeWhatsappAdapter.send).not.toHaveBeenCalled();
+    expect(fakeEmailAdapter.send).not.toHaveBeenCalled();
+    expect(rpcCalls.filter((c) => c.fn === "begin_communication_send")).toHaveLength(0);
+    expect(rpcCalls.filter((c) => c.fn === "apply_case_mutation")).toHaveLength(0);
+  });
+
+  it("only one of UPI ID / payee name present (should be impossible in the DB) is still treated as not configured", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    isLiveWhatsAppConfiguredMock.mockReturnValue(true);
+    const { client } = buildFakeSupabase({}, { automationEnabled: true, org: { upi_payee_name: null }, debtor: { email: null } });
+    const createClient = await mockedCreateClient();
+    createClient.mockResolvedValue(client);
+
+    const { SupabaseRepository } = await import("./supabase");
+    await expect(new SupabaseRepository().sendInitialReminder("case-1", ACTOR)).rejects.toThrow(/payment details/);
+    expect(fakeWhatsappAdapter.send).not.toHaveBeenCalled();
+  });
+
 });

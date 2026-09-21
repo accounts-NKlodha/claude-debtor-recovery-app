@@ -100,6 +100,17 @@ export interface Repository {
     input: import("@/contract/schemas").CreateOrganisationInput,
     actor: MutationActor,
   ): Promise<CreateOrganisationResult>;
+  /**
+   * Full-replace update of a creditor organisation's UPI ID + payee name
+   * (V2 WhatsApp reminder). Admin only; `reason` is required and audited
+   * (`organisation.payment_details_updated`, change indicators only -- the
+   * values themselves are never written to the audit log).
+   */
+  updateOrganisationPaymentDetails(
+    organisationId: string,
+    input: import("@/contract/schemas").OrganisationPaymentDetailsInput,
+    actor: MutationActor,
+  ): Promise<Organisation>;
   getDebtor(id: string): Promise<Debtor | undefined>;
   /**
    * Full-replace update of a debtor's mobile/email (core-workflow
@@ -214,12 +225,51 @@ export interface Repository {
    * outcome) and required an explicit operator acknowledgement
    * (`forceRetryAfterAmbiguous`) to proceed -- see
    * docs/email-delivery/index.md's "ambiguous outcome" section.
+   *
+   * `warnings` lists channels that were deliberately NOT attempted and why
+   * (e.g. WhatsApp skipped because the creditor's UPI details are not
+   * configured) so the operator is told rather than left guessing why only
+   * one channel appears. It is empty when nothing was skipped.
    */
   sendInitialReminder(
     caseId: string,
     actor: MutationActor,
-    options?: { forceRetryAfterAmbiguous?: boolean },
-  ): Promise<{ case: RecoveryCase; communications: Communication[]; ambiguous: boolean }>;
+    /** `invoiceId`: required to send the WhatsApp reminder when the case has several invoices (never defaults to the first). */
+    options?: { forceRetryAfterAmbiguous?: boolean; invoiceId?: string | null },
+  ): Promise<{ case: RecoveryCase; communications: Communication[]; ambiguous: boolean; warnings: string[] }>;
+
+  // -- WhatsApp V1 message families (follow-up / commitment / received / closed) --
+  listPromisesForCase(caseId: string): Promise<import("@/contract/types").PaymentPromise[]>;
+  /**
+   * Records a promise-to-pay for a case awaiting the debtor's response.
+   * Preserves history (the previous active promise for the same invoice is
+   * superseded, never overwritten), moves the case to `promise_to_pay` and
+   * audits. Staff/admin only.
+   */
+  recordPaymentPromise(
+    caseId: string,
+    input: import("@/contract/schemas").RecordPaymentPromiseInput,
+    actor: MutationActor,
+  ): Promise<{ promise: import("@/contract/types").PaymentPromise; case: RecoveryCase }>;
+  /**
+   * Every WhatsApp message family evaluated for the case: available (with
+   * the reason), unavailable (with the reason) or already sent. Includes
+   * server-only send details in `entry` -- strip with toOfferView() before
+   * handing to a browser component.
+   */
+  getWhatsAppOffers(caseId: string): Promise<import("@/domain/whatsapp-messages").WhatsAppOffer[]>;
+  /**
+   * Sends ONE approved WhatsApp message for ONE business event (identified
+   * by `eventKey`). Eligibility is recomputed server-side; a repeat of an
+   * accepted event returns `already_sent` without a second message; an
+   * ambiguous prior attempt blocks unless `forceRetryAfterAmbiguous`.
+   * Operator-triggered only -- nothing sends unattended.
+   */
+  sendWhatsAppMessage(
+    caseId: string,
+    input: { eventKey: string; forceRetryAfterAmbiguous?: boolean },
+    actor: MutationActor,
+  ): Promise<import("@/server/whatsapp-orchestrator").WhatsAppSendResult>;
 
   /**
    * GST assisted-notification flow (PRD §11). Government-portal actions cap
@@ -374,4 +424,20 @@ export interface Repository {
     >,
     actor: MutationActor,
   ): Promise<{ case: RecoveryCase; invoice: Invoice }>;
+
+  /** The three activation gates (client certification, staff validation, 60-day age gate) as evidenced right now. */
+  getActivationGates(caseId: string): Promise<import("@/domain/activation").ActivationGates>;
+  /**
+   * Records one activation gate by staff (audited, reason required) and
+   * re-evaluates the case. Client certification is recorded here (staff
+   * attests the client's certification); staff validation for cases that are
+   * `under_validation` without an OCR correction. The 60-day age gate cannot
+   * be recorded -- it is derived from the invoice due dates.
+   */
+  recordActivationGate(
+    caseId: string,
+    gate: "client_certification" | "staff_validation",
+    reason: string,
+    actor: MutationActor,
+  ): Promise<{ case: RecoveryCase; gates: import("@/domain/activation").ActivationGates; activated: boolean }>;
 }

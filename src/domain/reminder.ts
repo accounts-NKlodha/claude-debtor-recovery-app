@@ -8,6 +8,7 @@
 import { advance, caseToWorkflowState, transitionToCasePatch } from "./workflow";
 import { reminderTimerDeadline } from "./scheduling";
 import type { RecoveryCase } from "@/contract/types";
+import type { ReminderStageSummary } from "./reminder-stage";
 
 type CaseInput = Parameters<typeof caseToWorkflowState>[0] & RecoveryCase;
 
@@ -58,6 +59,70 @@ export function applyReminderDelivered(
     },
     note: transition.note,
   };
+}
+
+/**
+ * An operator-sent follow-up reminder was accepted by the provider: move to
+ * the follow-up stage and start the second response window. The window
+ * reuses the existing 24h reminder timer rule (no new timer constant); GST
+ * eligibility review only follows if that window also elapses.
+ */
+export function applyFollowUpSent(
+  kase: CaseInput,
+  sentAt: Date,
+): { updatedCase: RecoveryCase; note: string } {
+  const transition = advance(caseToWorkflowState(kase), { type: "FOLLOW_UP_SENT" });
+  return {
+    updatedCase: {
+      ...kase,
+      ...transitionToCasePatch(transition.next),
+      nextScheduledAt: reminderTimerDeadline(sentAt).toISOString(),
+    },
+    note: transition.note,
+  };
+}
+
+/**
+ * Case update after the INVOICE-level reminder history changed (an initial or
+ * follow-up reminder was accepted). The case status is the deterministic
+ * aggregate of its outstanding invoices (src/domain/reminder-stage.ts): it
+ * only advances, and only as far as the SLOWEST outstanding invoice allows --
+ * so, for example, sending the follow-up for invoice A does not move a case
+ * whose invoice B still awaits its follow-up, and escalation review stays
+ * unreachable until every outstanding invoice has had its follow-up.
+ */
+export function applyReminderStage(
+  kase: CaseInput,
+  summary: ReminderStageSummary,
+  ctx: { at: Date; detail: string },
+): { updatedCase: RecoveryCase; note: string } {
+  let next: RecoveryCase = kase;
+  let note = ctx.detail;
+
+  if (kase.status === "active" && summary.status !== "active") {
+    const sent = applyReminderSent(kase);
+    const delivered = applyReminderDelivered(sent.updatedCase, ctx.at);
+    next = delivered.updatedCase;
+    note = `${sent.note}; ${delivered.note}; ${ctx.detail}`;
+  }
+  if (next.status === "initial_communication_sent" && summary.status === "follow_up_sent") {
+    const followUp = applyFollowUpSent(next as CaseInput, ctx.at);
+    next = followUp.updatedCase;
+    note = `${note}; ${followUp.note}`;
+  }
+  if (next.status === "initial_communication_sent" && summary.outstandingInvoices > 1) {
+    const awaiting = summary.awaitingInitial.length;
+    const followUps = summary.awaitingFollowUp.length;
+    next = {
+      ...next,
+      waitingOn: "system",
+      blocker:
+        `Invoice reminders in progress -- ${summary.remindedInvoices} of ${summary.outstandingInvoices} outstanding invoices reminded` +
+        (awaiting > 0 ? `; ${awaiting} still await an initial reminder` : "") +
+        (followUps > 0 ? `; ${followUps} await a follow-up` : ""),
+    };
+  }
+  return { updatedCase: { ...next, nextScheduledAt: summary.nextScheduledAt }, note };
 }
 
 /** Both channels failing pauses escalation for a contact correction (PRD §8). */

@@ -23,6 +23,7 @@ const CASE_META: Record<CaseStatus, Meta> = {
   correction_required: { label: "Correction required", tone: "warning", Icon: CircleAlert },
   active: { label: "Active", tone: "info", Icon: Circle },
   initial_communication_sent: { label: "Initial reminder sent", tone: "info", Icon: Clock },
+  follow_up_sent: { label: "Follow-up reminder sent", tone: "info", Icon: Clock },
   contact_update_required: { label: "Contact update required", tone: "warning", Icon: CircleAlert },
   payment_confirmation_required: {
     label: "Payment confirmation required",

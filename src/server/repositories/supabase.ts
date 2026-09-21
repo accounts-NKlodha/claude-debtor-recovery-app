@@ -22,6 +22,8 @@ import { createClient } from "@/lib/supabase/server";
 import { estimateSuccessFee } from "@/domain/fees";
 import { applyConfirmedPayment } from "@/domain/apply-payment";
 import {
+  applyFollowUpSent,
+  applyReminderStage,
   applyReminderDelivered,
   applyReminderDeliveryFailed,
   applyReminderSent,
@@ -38,11 +40,32 @@ import {
 } from "@/domain/hearing";
 import { applyReplyClassified } from "@/domain/debtor-reply";
 import { applyOcrCorrected } from "@/domain/ocr";
+import {
+  ACTIVATION_EVIDENCE_ACTIONS,
+  activationEvidenceFrom,
+  applyActivationGates,
+  evaluateActivationGates,
+  isPreActivation,
+  type ActivationGates,
+} from "@/domain/activation";
 import { createDraftCase, type IntakeInvoiceInput } from "@/domain/intake";
 import { parseCsv, parseDate, parseMoney, validateImport } from "@/domain/bulk-import";
 import { runAdapter } from "@/orchestrator/run-adapter";
-import { getAdapters } from "@/adapters";
+import { getAdapters, isLiveWhatsAppConfigured } from "@/adapters";
 import { isProductionRuntime } from "@/lib/config/production";
+import { planWhatsAppReminder } from "@/domain/whatsapp-reminder";
+import type { LiveSendEnv } from "@/domain/whatsapp-messages";
+import { hasAcceptedEmailInitial } from "@/domain/reminder-stage";
+import { istBusinessDate } from "@/domain/scheduling";
+import { applyPromiseRecorded, validatePromiseDate } from "@/domain/promise";
+import { isWhatsAppCampaignConfigured } from "@/lib/config/aisensy";
+import {
+  computeReminderStage,
+  getWhatsAppOffersFlow,
+  sendWhatsAppMessageFlow,
+  type WhatsAppFlowDeps,
+} from "@/server/whatsapp-orchestrator";
+import type { RecordPaymentPromiseInput } from "@/contract/schemas";
 import {
   gstComposeSchema,
   type DebtorContactInput,
@@ -63,6 +86,7 @@ import type {
   InvoiceRow,
   OrganisationRow,
   PaymentAllocationRow,
+  PaymentPromiseRow,
   PaymentRecordRow,
   RecoveryCaseRow,
   WorkflowTaskRow,
@@ -78,6 +102,7 @@ import type {
   Invoice,
   Organisation,
   PaymentAllocation,
+  PaymentPromise,
   PaymentRecord,
   RecoveryCase,
   WorkflowTask,
@@ -104,6 +129,8 @@ function toOrganisation(row: Database["public"]["Tables"]["organisations"]["Row"
     creditorGstin: row.creditor_gstin,
     udyamNumber: row.udyam_number,
     jitoMember: row.jito_member,
+    upiId: row.upi_id,
+    upiPayeeName: row.upi_payee_name,
     createdAt: row.created_at,
   };
 }
@@ -215,6 +242,23 @@ function toTask(row: WorkflowTaskRow): WorkflowTask {
     dueAt: row.due_at,
     resolvedAt: row.resolved_at,
     createdAt: row.created_at,
+  };
+}
+
+function toPromise(row: PaymentPromiseRow): PaymentPromise {
+  return {
+    id: row.id,
+    organisationId: row.organisation_id,
+    caseId: row.case_id,
+    invoiceId: row.invoice_id,
+    promisedOn: row.promised_on,
+    promisedAmount: row.promised_amount,
+    status: row.status,
+    sourceReplyId: row.source_reply_id,
+    supersedesId: row.supersedes_id,
+    recordedById: row.recorded_by_id,
+    createdAt: row.created_at,
+    supersededAt: row.superseded_at,
   };
 }
 
@@ -427,6 +471,24 @@ export class SupabaseRepository implements Repository {
     return { status: "created", organisation: toOrganisation(created) };
   }
 
+  async updateOrganisationPaymentDetails(
+    organisationId: string,
+    input: import("@/contract/schemas").OrganisationPaymentDetailsInput,
+    actor: MutationActor,
+  ): Promise<Organisation> {
+    const supabase = await this.db();
+    // Admin check, audit (change indicators only) and the UPDATE happen
+    // atomically inside update_organisation_payment_details() (0022).
+    const updated = await callWriteRpc<OrganisationRow>(supabase, "update_organisation_payment_details", {
+      p_organisation_id: organisationId,
+      p_upi_id: input.upiId,
+      p_upi_payee_name: input.upiPayeeName,
+      p_reason: input.reason,
+      p_expected_actor_id: actor.actorId,
+    });
+    return toOrganisation(updated);
+  }
+
   async getDebtor(id: string) {
     const supabase = await this.db();
     const { data, error } = await supabase.from("debtors").select("*").eq("id", id).maybeSingle();
@@ -602,7 +664,7 @@ export class SupabaseRepository implements Repository {
           ? "none"
           : t.dueAt < now.toISOString()
             ? "overdue"
-            : t.dueAt.slice(0, 10) === now.toISOString().slice(0, 10)
+            : istBusinessDate(new Date(t.dueAt)) === istBusinessDate(now)
               ? "today"
               : "upcoming";
         return {
@@ -857,7 +919,7 @@ export class SupabaseRepository implements Repository {
       const raw = grid[row.rowNumber - 1];
       if (!raw) continue;
       const cell = (col: string) => (raw[idx[col]] ?? "").trim();
-      const invoiceDate = parseDate(cell("invoice_date")) ?? new Date().toISOString().slice(0, 10);
+      const invoiceDate = parseDate(cell("invoice_date")) ?? istBusinessDate(new Date());
       const dueDate = cell("due_date") ? parseDate(cell("due_date")) : null;
       const totalDue = parseMoney(cell("total_due")) ?? row.totalDue;
 
@@ -999,13 +1061,17 @@ export class SupabaseRepository implements Repository {
     body: string,
     actor: MutationActor,
     forceRetryAfterAmbiguous: boolean,
+    templateParams?: string[],
+    idempotencyKeyOverride?: string,
+    reasonLabel = "Initial reminder",
   ): Promise<{
     communication: Communication;
     outcome: "success" | "already_sent" | "retryable_failure" | "permanent_failure" | "human_action_required" | "drift_detected";
     ambiguousBlock: boolean;
     blockedReason: string | null;
   }> {
-    const idempotencyKey = `reminder-initial:${channel}:${caseId}:${new Date().toISOString().slice(0, 10)}`;
+    const idempotencyKey =
+      idempotencyKeyOverride ?? `reminder-initial:${channel}:${caseId}:${new Date().toISOString().slice(0, 10)}`;
 
     const begun = await callWriteRpc<{ communication: CommunicationRow; isNew: boolean }>(
       supabase,
@@ -1018,7 +1084,7 @@ export class SupabaseRepository implements Repository {
         p_template_version: templateVersion,
         p_subject: subject,
         p_body: body,
-        p_reason: `Initial reminder (${channel})`,
+        p_reason: `${reasonLabel} (${channel})`,
         p_expected_actor_id: actor.actorId,
       },
     );
@@ -1036,7 +1102,7 @@ export class SupabaseRepository implements Repository {
       {
         p_communication_id: comm.id,
         p_attempt: nextAttempt,
-        p_reason: `Initial reminder (${channel}) attempt ${nextAttempt}`,
+        p_reason: `${reasonLabel} (${channel}) attempt ${nextAttempt}`,
         p_expected_actor_id: actor.actorId,
         p_force_after_ambiguous: forceRetryAfterAmbiguous,
       },
@@ -1057,6 +1123,7 @@ export class SupabaseRepository implements Repository {
           templateVersion,
           subject: subject ?? undefined,
           body,
+          templateParams,
         }),
       idempotencyKey,
     );
@@ -1074,6 +1141,7 @@ export class SupabaseRepository implements Repository {
         p_case_id: caseId,
         p_case: null,
         p_reason: sendOutcome.urgentTask?.reason ?? sendOutcome.result.nextAction ?? `${channel} delivery ${status}`,
+        p_provider: adapter.name,
         p_expected_actor_id: actor.actorId,
       },
     );
@@ -1089,13 +1157,19 @@ export class SupabaseRepository implements Repository {
   async sendInitialReminder(
     caseId: string,
     actor: MutationActor,
-    options: { forceRetryAfterAmbiguous?: boolean } = {},
-  ): Promise<{ case: RecoveryCase; communications: Communication[]; ambiguous: boolean }> {
+    options: { forceRetryAfterAmbiguous?: boolean; invoiceId?: string | null } = {},
+  ): Promise<{ case: RecoveryCase; communications: Communication[]; ambiguous: boolean; warnings: string[] }> {
     const supabase = await this.db();
 
     const kase = await this.getCase(caseId);
     if (!kase) throw new Error(`sendInitialReminder: case ${caseId} not found`);
-    if (kase.status !== "active") {
+    // With the live WhatsApp provider configured, initial reminders are tracked
+    // PER INVOICE (src/domain/reminder-stage.ts): the case stays in its reminder
+    // phase while other invoices still await theirs. Without it (email only /
+    // demo) the original once-per-case, active-only rule is unchanged.
+    const invoiceLevel = this.whatsAppEnv().liveConfigured;
+    const inReminderPhase = kase.status === "active" || (invoiceLevel && kase.status === "initial_communication_sent");
+    if (!inReminderPhase) {
       throw new Error(
         `sendInitialReminder: case ${caseId} is "${kase.status}", not "active" -- nothing to send`,
       );
@@ -1117,28 +1191,64 @@ export class SupabaseRepository implements Repository {
       invoiceNumber: invoices[0]?.invoiceNumber ?? null,
     });
 
-    // WhatsApp has no real production provider (src/adapters/index.ts keeps
-    // it mocked unconditionally) -- the mock adapter reports fake success
-    // with a realistic-looking `wamid.*` providerRef for virtually every
-    // send, which would silently advance a real case's reminder timer and
-    // record a communication_delivery claiming a WhatsApp send that never
-    // happened. Attempting it at all in production is therefore unsafe;
-    // it is only ever attempted outside production, where the mock is an
-    // explicit, understood demo/test affordance (final-UAT go-live task).
-    const channels: { channel: "whatsapp" | "email"; to: string; templateKey: string; templateVersion: number; subject: string | null }[] = [];
-    if (debtor?.mobile && !isProductionRuntime()) {
-      channels.push({ channel: "whatsapp", to: debtor.mobile, templateKey: "reminder_initial_v3", templateVersion: 3, subject: null });
+    let alreadyRemindedInvoiceIds: ReadonlySet<string> = new Set();
+    let emailInitialAlreadySent = false;
+    if (invoiceLevel) {
+      const before = await computeReminderStage(this, caseId);
+      alreadyRemindedInvoiceIds = new Set(before.states.filter((r) => r.initialSource === "whatsapp").map((r) => r.invoiceId));
+      emailInitialAlreadySent = hasAcceptedEmailInitial(caseId, await this.listCommunicationsForCase(caseId));
     }
-    if (debtor?.email) {
-      channels.push({ channel: "email", to: debtor.email, templateKey: "reminder_initial_email_v1", templateVersion: 1, subject });
+
+    // WhatsApp leg: decided by the shared planner (src/domain/whatsapp-reminder.ts)
+    // so this repository and MemoryRepository can never drift on a safety
+    // rule. With the live AiSensy adapter configured it requires a
+    // normalizable debtor mobile, the creditor's UPI ID + payee name (no
+    // fallback to synthetic/default details) and the global kill switch on;
+    // otherwise WhatsApp is skipped with a controlled reason -- never a fake
+    // or mock send in production.
+    const whatsAppPlan = await planWhatsAppReminder({
+      caseId,
+      debtor,
+      org,
+      invoices,
+      selectedInvoiceId: options.invoiceId,
+      alreadyRemindedInvoiceIds,
+      isProduction: isProductionRuntime(),
+      env: this.whatsAppEnv(),
+      legacyBody: body,
+    });
+
+    const channels: {
+      channel: "whatsapp" | "email";
+      to: string;
+      templateKey: string;
+      templateVersion: number;
+      subject: string | null;
+      body: string;
+      templateParams?: string[];
+      idempotencyKey?: string;
+    }[] = [];
+    const warnings: string[] = [];
+    if (whatsAppPlan.kind === "attempt") channels.push(whatsAppPlan.entry);
+    if (whatsAppPlan.kind === "skipped") warnings.push(`WhatsApp reminder not sent: ${whatsAppPlan.reason}.`);
+    // The initial email is case-level and sent at most once per case: a
+    // reminder for another invoice must never repeat it.
+    if (debtor?.email && !emailInitialAlreadySent) {
+      channels.push({ channel: "email", to: debtor.email, templateKey: "reminder_initial_email_v1", templateVersion: 1, subject, body });
     }
     if (channels.length === 0) {
-      const reason =
-        isProductionRuntime() && debtor?.mobile && !debtor?.email
-          ? "case has a mobile number but no email on file, and WhatsApp is not an available production channel -- add a debtor email"
-          : "no mobile or email on file";
+      if (whatsAppPlan.kind === "skipped") {
+        throw new Error(
+          emailInitialAlreadySent && debtor?.email
+            ? `sendInitialReminder: WhatsApp reminder not sent: ${whatsAppPlan.reason}. The initial email was already sent for this case.`
+            : `sendInitialReminder: WhatsApp reminder not sent: ${whatsAppPlan.reason}. The debtor has no email on file, so there is no other channel to send on.`,
+        );
+      }
+      if (emailInitialAlreadySent) {
+        throw new Error("sendInitialReminder: the initial reminder was already sent by email and there is no WhatsApp reminder left to send for this debtor.");
+      }
       throw new Error(
-        `sendInitialReminder: case ${caseId}'s debtor has ${reason} -- nothing to send. Correct the debtor's contact details first.`,
+        `sendInitialReminder: case ${caseId}'s debtor has no mobile or email on file -- nothing to send. Correct the debtor's contact details first.`,
       );
     }
 
@@ -1153,9 +1263,11 @@ export class SupabaseRepository implements Repository {
           c.templateKey,
           c.templateVersion,
           c.subject,
-          body,
+          c.body,
           actor,
           options.forceRetryAfterAmbiguous ?? false,
+          c.templateParams,
+          c.idempotencyKey,
         ),
       );
     }
@@ -1165,7 +1277,20 @@ export class SupabaseRepository implements Repository {
     const allFailedTerminally = results.every((r) => r.outcome !== "success" && r.outcome !== "already_sent") && !anyAmbiguous;
 
     let updatedCase: RecoveryCase;
-    if (anySuccess) {
+    const stage = anySuccess && invoiceLevel ? (await computeReminderStage(this, caseId, results.map((r) => r.communication))).summary : null;
+    if (anySuccess && stage && stage.status !== "active") {
+      const staged = applyReminderStage(kase, stage, { at: new Date(), detail: "Initial reminder accepted" });
+      const stagedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
+        p_case_id: caseId,
+        p_case: staged.updatedCase,
+        p_action: "reminder.sent",
+        p_entity: "recovery_case",
+        p_reason: staged.note,
+        p_communication: null,
+        p_expected_actor_id: actor.actorId,
+      });
+      updatedCase = toCase(stagedRow);
+    } else if (anySuccess && kase.status === "active") {
       const sent = applyReminderSent(kase);
       // Demo/live simplification carried over unchanged from before this
       // task: neither the mock WhatsApp adapter nor plain Gmail SMTP (no
@@ -1187,7 +1312,9 @@ export class SupabaseRepository implements Repository {
         p_expected_actor_id: actor.actorId,
       });
       updatedCase = toCase(updatedRow);
-    } else if (allFailedTerminally) {
+    } else if (anySuccess) {
+      updatedCase = kase; // already past the initial stage; nothing new advances the case aggregate
+    } else if (allFailedTerminally && kase.status === "active") {
       const sentPatch = applyReminderSent(kase);
       const failed = applyReminderDeliveryFailed(sentPatch.updatedCase, true);
       const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
@@ -1210,7 +1337,112 @@ export class SupabaseRepository implements Repository {
       updatedCase = kase;
     }
 
-    return { case: updatedCase, communications: results.map((r) => r.communication), ambiguous: anyAmbiguous };
+    return { case: updatedCase, communications: results.map((r) => r.communication), ambiguous: anyAmbiguous, warnings };
+  }
+
+  /* ---- WhatsApp V1 message families ---------------------------------- */
+
+  private whatsAppEnv(): LiveSendEnv {
+    return {
+      liveConfigured: isLiveWhatsAppConfigured(),
+      campaignConfigured: isWhatsAppCampaignConfigured,
+      isAutomationEnabled: async () => (await this.getAutomationState()).enabled,
+    };
+  }
+
+  private whatsAppFlow(actor: MutationActor | null): WhatsAppFlowDeps {
+    return {
+      source: this,
+      env: () => this.whatsAppEnv(),
+      sendChannel: async (caseId, entry, force, reasonLabel) => {
+        if (!actor) throw new Error("sendWhatsAppMessage: an authenticated actor is required");
+        const supabase = await this.db();
+        return this.sendReminderChannel(
+          supabase, caseId, "whatsapp", entry.to, entry.templateKey, entry.templateVersion, null, entry.body,
+          actor, force, entry.templateParams, entry.idempotencyKey, reasonLabel,
+        );
+      },
+      advanceAfterFollowUp: async (kase, summary, detail) => {
+        if (!actor) throw new Error("sendWhatsAppMessage: an authenticated actor is required");
+        const supabase = await this.db();
+        const sent =
+          summary && summary.status !== "active"
+            ? applyReminderStage(kase, summary, { at: new Date(), detail })
+            : applyFollowUpSent(kase, new Date());
+        const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
+          p_case_id: kase.id,
+          p_case: sent.updatedCase,
+          p_action: "reminder.followup_sent",
+          p_entity: "recovery_case",
+          p_reason: sent.note,
+          p_communication: null,
+          p_expected_actor_id: actor.actorId,
+        });
+        return toCase(updatedRow);
+      },
+    };
+  }
+
+  async listPromisesForCase(caseId: string) {
+    const supabase = await this.db();
+    const res = await supabase
+      .from("payment_promises")
+      .select("*")
+      .eq("case_id", caseId)
+      .order("created_at", { ascending: true });
+    return unwrap(res, "listPromisesForCase").map(toPromise);
+  }
+
+  async recordPaymentPromise(caseId: string, input: RecordPaymentPromiseInput, actor: MutationActor) {
+    const supabase = await this.db();
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`recordPaymentPromise: case ${caseId} not found`);
+    const dateError = validatePromiseDate(input.promisedOn, new Date());
+    if (dateError) throw new Error(dateError);
+
+    const invoices = await this.listInvoicesForCase(caseId);
+    let invoiceId = input.invoiceId;
+    if (invoiceId && !invoices.some((i) => i.id === invoiceId)) {
+      throw new Error("The selected invoice does not belong to this case");
+    }
+    if (!invoiceId && invoices.length === 1) invoiceId = invoices[0].id;
+    if (!invoiceId && invoices.length > 1) {
+      throw new Error("Choose the invoice this promise relates to (the case has several invoices)");
+    }
+    const applied = applyPromiseRecorded(kase, input.promisedOn); // throws unless awaiting the debtor's response
+
+    // Insert + supersede + case transition + audit happen atomically in the RPC (0023).
+    const result = await callWriteRpc<{ promise: PaymentPromiseRow; case: RecoveryCaseRow }>(
+      supabase,
+      "record_payment_promise",
+      {
+        p_case_id: caseId,
+        p_invoice_id: invoiceId ?? null,
+        p_promised_on: input.promisedOn,
+        p_promised_amount: input.promisedAmountPaise ?? null,
+        p_source_reply_id: input.sourceReplyId ?? null,
+        p_case: applied.updatedCase,
+        p_reason: applied.note,
+        p_expected_actor_id: actor.actorId,
+      },
+    );
+    return { promise: toPromise(result.promise), case: toCase(result.case) };
+  }
+
+  async getWhatsAppOffers(caseId: string) {
+    return getWhatsAppOffersFlow(this.whatsAppFlow(null), caseId);
+  }
+
+  async sendWhatsAppMessage(
+    caseId: string,
+    input: { eventKey: string; forceRetryAfterAmbiguous?: boolean },
+    actor: MutationActor,
+  ) {
+    return sendWhatsAppMessageFlow(this.whatsAppFlow(actor), {
+      caseId,
+      eventKey: input.eventKey,
+      forceRetryAfterAmbiguous: input.forceRetryAfterAmbiguous ?? false,
+    });
   }
 
   async prepareGstNotification(
@@ -1708,7 +1940,11 @@ export class SupabaseRepository implements Repository {
     if (!kase) throw new Error(`correctInvoiceOcr: case ${caseId} not found`);
 
     const outstandingBalance = corrections.outstandingBalance ?? kase.principalOutstanding;
-    const corrected = applyOcrCorrected({ ...kase, principalOutstanding: outstandingBalance });
+    // Gate state is evaluated against the invoice AS CORRECTED (a corrected due date changes the age gate).
+    const existing = await this.listInvoicesForCase(caseId);
+    const correctedInvoices = existing.map((i) => (i.id === invoiceId ? { ...i, ...corrections } : i));
+    const gates = evaluateActivationGates({ invoices: correctedInvoices, evidence: await this.activationEvidence(caseId, existing), now: new Date() });
+    const corrected = applyOcrCorrected({ ...kase, principalOutstanding: outstandingBalance }, gates);
     const updatedCase: RecoveryCase = {
       ...corrected.updatedCase,
       principalOutstanding: outstandingBalance,
@@ -1725,6 +1961,57 @@ export class SupabaseRepository implements Repository {
     });
 
     return { case: updatedCase, invoice: toInvoice(invoiceRow) };
+  }
+
+  private async activationEvidence(caseId: string, invoices?: Invoice[]) {
+    const supabase = await this.db();
+    const invoiceIds = (invoices ?? (await this.listInvoicesForCase(caseId))).map((i) => i.id);
+    const res = await supabase
+      .from("audit_events")
+      .select("action, entity_id")
+      .in("action", [...ACTIVATION_EVIDENCE_ACTIONS])
+      .in("entity_id", [caseId, ...invoiceIds]);
+    const rows = unwrap(res, "activationEvidence") as { action: string; entity_id: string | null }[];
+    return activationEvidenceFrom(rows.map((r) => ({ action: r.action, entityId: r.entity_id })), caseId, invoiceIds);
+  }
+
+  async getActivationGates(caseId: string): Promise<ActivationGates> {
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`getActivationGates: case ${caseId} not found`);
+    const invoices = await this.listInvoicesForCase(caseId);
+    return evaluateActivationGates({ invoices, evidence: await this.activationEvidence(caseId, invoices), now: new Date() });
+  }
+
+  async recordActivationGate(caseId: string, gate: "client_certification" | "staff_validation", reason: string, actor: MutationActor) {
+    const supabase = await this.db();
+    const kase = await this.getCase(caseId);
+    if (!kase) throw new Error(`recordActivationGate: case ${caseId} not found`);
+    if (!reason.trim()) throw new Error("recordActivationGate: a reason is required");
+    if (!isPreActivation(kase.status)) {
+      throw new Error(`recordActivationGate: case is already "${kase.status.replace(/_/g, " ")}" -- activation gates apply only before activation`);
+    }
+    if (gate === "staff_validation" && kase.status !== "under_validation") {
+      throw new Error("recordActivationGate: staff validation of a case awaiting correction is given by confirming the corrected invoice fields");
+    }
+    const action = gate === "client_certification" ? "case.client_certified" : "case.staff_validated";
+    const invoices = await this.listInvoicesForCase(caseId);
+    // The gate's evidence is the audit event written by this very mutation, so evaluate as if it were already recorded.
+    const before = await this.activationEvidence(caseId, invoices);
+    const evidence = { ...before, ...(gate === "client_certification" ? { clientCertified: true } : { staffValidated: true }) };
+    const gates = evaluateActivationGates({ invoices, evidence, now: new Date() });
+    // A case still awaiting correction only records the certification; the OCR confirmation evaluates everything.
+    const applied = kase.status === "correction_required" ? { updatedCase: kase, note: "", activated: false } : applyActivationGates(kase, gates);
+    const patch: RecoveryCase = { ...applied.updatedCase, activatedAt: applied.activated ? new Date().toISOString() : kase.activatedAt };
+    const row = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
+      p_case_id: caseId,
+      p_case: patch,
+      p_action: action,
+      p_entity: "recovery_case",
+      p_reason: applied.note ? `${reason} -- ${applied.note}` : reason,
+      p_communication: null,
+      p_expected_actor_id: actor.actorId,
+    });
+    return { case: toCase(row), gates, activated: applied.activated };
   }
 
   async listAuditLog(limit = 200): Promise<import("@/lib/mock-data").AuditEntry[]> {

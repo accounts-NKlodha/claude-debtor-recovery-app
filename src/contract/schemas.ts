@@ -171,6 +171,58 @@ export const createOrganisationSchema = z
   });
 export type CreateOrganisationInput = z.infer<typeof createOrganisationSchema>;
 
+/** UPI ID (VPA): handle@psp. Mirrors organisations_upi_id_fmt_chk (0022). */
+export const UPI_ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]{1,63}@[A-Za-z][A-Za-z0-9]{1,31}$/;
+
+/**
+ * Creditor payment details (V1: UPI only). Both fields are set together or
+ * both left blank (blank = clear). Blank form fields arrive as "" -- treated
+ * as absent, same convention as the other optional form fields here. The
+ * payee name has internal whitespace collapsed (WhatsApp template
+ * parameters may not contain newlines, tabs or runs of spaces) and mirrors
+ * organisations_upi_payee_fmt_chk (0022).
+ */
+export const organisationPaymentDetailsSchema = z
+  .object({
+    upiId: z.preprocess(
+      (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+      z.string().trim().regex(UPI_ID_REGEX, "Enter a valid UPI ID, e.g. name@bank").nullable(),
+    ),
+    upiPayeeName: z.preprocess(
+      (v) => (typeof v === "string" ? (v.replace(/\s+/g, " ").trim() === "" ? null : v.replace(/\s+/g, " ").trim()) : v),
+      z
+        .string()
+        .min(2, "Payee name must be at least 2 characters")
+        .max(100, "Payee name must be at most 100 characters")
+        .nullable(),
+    ),
+    reason: z.string().trim().min(3, "A reason for this change is required").max(500),
+  })
+  .refine((v) => (v.upiId === null) === (v.upiPayeeName === null), {
+    message: "Provide both the UPI ID and the payee name, or leave both blank to clear them",
+    path: ["upiPayeeName"],
+  });
+export type OrganisationPaymentDetailsInput = z.infer<typeof organisationPaymentDetailsSchema>;
+
+/**
+ * Recording a promise-to-pay. `promisedOn` is a date-only string;
+ * blank optional fields (amount, invoice) arrive as "" from a form and are
+ * treated as absent. The amount is entered in rupees and converted to paise
+ * by the server action, not here.
+ */
+export const recordPaymentPromiseSchema = z.object({
+  caseId: z.string().trim().min(1, "Missing case"),
+  invoiceId: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? null : v), z.string().trim().min(1).nullable()),
+  promisedOn: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Enter the promised payment date")
+    .refine((v) => !Number.isNaN(new Date(v + "T00:00:00Z").getTime()), "Enter a valid date"),
+  promisedAmountPaise: z.number().int().positive("Promised amount must be greater than zero").nullable(),
+  sourceReplyId: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? null : v), z.string().trim().min(1).nullable()),
+});
+export type RecordPaymentPromiseInput = z.infer<typeof recordPaymentPromiseSchema>;
+
 export const BULK_IMPORT_COLUMNS = [
   "client_code",
   "legal_entity_name",

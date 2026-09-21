@@ -3,6 +3,29 @@
 All notable changes to Debtrecover. Format loosely follows Keep a Changelog;
 versions follow semver once past 0.x.
 
+## [0.1.0] - V1 production release (2026-09)
+
+### Added
+- WhatsApp V1 via the AiSensy Campaign API: Initial and Follow-up reminders, Commitment reminder,
+  Payment Received and Payment Closed confirmations (5 approved V2 templates: 8/8/7/6/5 variables),
+  operator-triggered, business-event idempotency keys, durable communication + delivery records,
+  invoice-level reminder stage (multi-invoice cases), promise-to-pay records (`payment_promises`),
+  conservative "Total Amount Paid" rule, amount variables sent with one leading space.
+- Case activation gates: client certification (recorded by staff, audited), staff validation, derived 60-day age gate.
+- Organisation UPI / payee payment details (admin-only).
+- Migrations 0021-0025 (delivery provider param, UPI details, follow-up stage + promises, IST payment business date, least-privilege table grants).
+- Hosting assessment (`docs/hosting-assessment`): Lovable cannot host this Next.js/Nodemailer app; Vercel (Pro) or the documented self-hosted Node server can.
+
+### Fixed
+- Payment `received_on` was the UTC date (wrong 00:00-05:30 IST); it is now the IST business date.
+- OCR confirmation used to skip client certification and the 60-day age gate.
+- Backup task now starts Docker Desktop itself instead of failing when it is not running.
+- HSTS header on production builds; `server-only` guard on the Supabase server client.
+
+### Security
+- Migration 0025: `anon` has no table/sequence privileges; `authenticated` is SELECT-only (all writes go through SECURITY DEFINER RPCs);
+  RLS helper functions are not executable by `anon`; new tables/functions no longer inherit those grants.
+
 ## [Unreleased]
 
 ### Added

@@ -8,8 +8,11 @@
 
 import { nanoid } from "nanoid";
 import * as mock from "@/lib/mock-data";
+import { istBusinessDate } from "@/domain/scheduling";
 import { applyConfirmedPayment } from "@/domain/apply-payment";
 import {
+  applyFollowUpSent,
+  applyReminderStage,
   applyReminderDelivered,
   applyReminderDeliveryFailed,
   applyReminderSent,
@@ -26,10 +29,31 @@ import {
 } from "@/domain/hearing";
 import { applyReplyClassified } from "@/domain/debtor-reply";
 import { applyOcrCorrected } from "@/domain/ocr";
+import {
+  ACTIVATION_EVIDENCE_ACTIONS,
+  activationEvidenceFrom,
+  applyActivationGates,
+  evaluateActivationGates,
+  isPreActivation,
+  type ActivationGates,
+} from "@/domain/activation";
 import { createDraftCase, type IntakeInvoiceInput } from "@/domain/intake";
 import { parseCsv, parseDate, parseMoney, validateImport } from "@/domain/bulk-import";
 import { runAdapter } from "@/orchestrator/run-adapter";
-import { getAdapters } from "@/adapters";
+import { getAdapters, isLiveWhatsAppConfigured } from "@/adapters";
+import { isProductionRuntime } from "@/lib/config/production";
+import { planWhatsAppReminder } from "@/domain/whatsapp-reminder";
+import type { LiveSendEnv } from "@/domain/whatsapp-messages";
+import { hasAcceptedEmailInitial } from "@/domain/reminder-stage";
+import { applyPromiseRecorded, validatePromiseDate } from "@/domain/promise";
+import { isWhatsAppCampaignConfigured } from "@/lib/config/aisensy";
+import {
+  computeReminderStage,
+  getWhatsAppOffersFlow,
+  sendWhatsAppMessageFlow,
+  type WhatsAppFlowDeps,
+} from "@/server/whatsapp-orchestrator";
+import type { RecordPaymentPromiseInput } from "@/contract/schemas";
 import {
   gstComposeSchema,
   type DebtorContactInput,
@@ -38,7 +62,7 @@ import {
 } from "@/contract/schemas";
 import type { MsmeStage } from "@/contract/adapters";
 import type { Channel, ReplyClassification } from "@/contract/enums";
-import type { Communication, Invoice, PaymentRecord, RecoveryCase } from "@/contract/types";
+import type { Communication, Invoice, Organisation, PaymentRecord, RecoveryCase } from "@/contract/types";
 import type { MutationActor } from "@/lib/auth/types";
 import type {
   AgeingBucket,
@@ -68,6 +92,15 @@ function buildKnownInvoiceKeys(): Set<string> {
 }
 
 export class MemoryRepository implements Repository {
+  /**
+   * The in-memory repository holds demo/test data, so by default it can
+   * NEVER take the live WhatsApp path -- even if WHATSAPP_PROVIDER=aisensy is
+   * present in the environment (e.g. a developer's .env.local kept for a
+   * controlled live test), a demo debtor must never be messaged for real.
+   * Only tests opt in, with fake adapters, to exercise the V2 pipeline.
+   */
+  constructor(private readonly options: { allowLiveWhatsApp?: boolean } = {}) {}
+
   async getOrg(id: string) {
     return tick(mock.getOrg(id));
   }
@@ -106,6 +139,8 @@ export class MemoryRepository implements Repository {
       creditorGstin: input.creditorGstin ?? null,
       udyamNumber: input.udyamNumber ?? null,
       jitoMember: input.jitoMember,
+      upiId: null,
+      upiPayeeName: null,
       createdAt: new Date().toISOString(),
     });
     mock.appendAudit({
@@ -122,6 +157,28 @@ export class MemoryRepository implements Repository {
     });
     return tick({ status: "created", organisation });
   }
+
+  async updateOrganisationPaymentDetails(
+    organisationId: string,
+    input: import("@/contract/schemas").OrganisationPaymentDetailsInput,
+    actor: MutationActor,
+  ): Promise<Organisation> {
+    if (!mock.getOrg(organisationId)) {
+      throw new Error(`updateOrganisationPaymentDetails: organisation ${organisationId} not found`);
+    }
+    const updated = mock.updateOrganisationPaymentDetails(organisationId, input.upiId, input.upiPayeeName)!;
+    // Change indicators only -- never the UPI values (mirrors the RPC).
+    mock.appendAudit({
+      action: "organisation.payment_details_updated",
+      entity: "organisation",
+      entityId: organisationId,
+      reason: input.reason,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
+    });
+    return tick(updated);
+  }
+
   async getDebtor(id: string) {
     return tick(mock.getDebtor(id));
   }
@@ -345,7 +402,7 @@ export class MemoryRepository implements Repository {
       const raw = grid[row.rowNumber - 1];
       if (!raw) continue;
       const cell = (col: string) => (raw[idx[col]] ?? "").trim();
-      const invoiceDate = parseDate(cell("invoice_date")) ?? new Date().toISOString().slice(0, 10);
+      const invoiceDate = parseDate(cell("invoice_date")) ?? istBusinessDate(new Date());
       const dueDate = cell("due_date") ? parseDate(cell("due_date")) : null;
       const totalDue = parseMoney(cell("total_due")) ?? row.totalDue;
 
@@ -396,7 +453,7 @@ export class MemoryRepository implements Repository {
       organisationId: mock.getCase(input.caseId)?.organisationId ?? "",
       kind: input.kind,
       amount: input.amount,
-      receivedOn: new Date().toISOString().slice(0, 10),
+      receivedOn: istBusinessDate(new Date()), // IST business date, never the UTC date
       reference: input.reference,
       clientConfirmed: false, // apply confirmation via the shared path below
       createdAt: new Date().toISOString(),
@@ -474,12 +531,15 @@ export class MemoryRepository implements Repository {
     subject: string | null,
     body: string,
     forceRetryAfterAmbiguous: boolean,
+    templateParams?: string[],
+    idempotencyKeyOverride?: string,
   ): Promise<{
     communication: Communication;
     outcome: "success" | "already_sent" | "retryable_failure" | "permanent_failure" | "human_action_required" | "drift_detected";
     ambiguousBlock: boolean;
   }> {
-    const idempotencyKey = `reminder-initial:${channel}:${caseId}:${new Date().toISOString().slice(0, 10)}`;
+    const idempotencyKey =
+      idempotencyKeyOverride ?? `reminder-initial:${channel}:${caseId}:${new Date().toISOString().slice(0, 10)}`;
 
     const begun = mock.beginCommunicationSend({
       organisationId,
@@ -503,7 +563,7 @@ export class MemoryRepository implements Repository {
 
     const adapter = channel === "whatsapp" ? getAdapters().whatsapp : getAdapters().email;
     const sendOutcome = await runAdapter(
-      (key) => adapter.send({ idempotencyKey: key, caseId, channel, to, templateKey, templateVersion, subject: subject ?? undefined, body }),
+      (key) => adapter.send({ idempotencyKey: key, caseId, channel, to, templateKey, templateVersion, subject: subject ?? undefined, body, templateParams }),
       idempotencyKey,
     );
 
@@ -514,6 +574,7 @@ export class MemoryRepository implements Repository {
       adapterOutcome: sendOutcome.result.outcome,
       providerMessageId: sendOutcome.result.providerRef,
       errorDetail: sendOutcome.result.errorCode,
+      provider: adapter.name,
     });
 
     return { communication: completed.communication, outcome: sendOutcome.result.outcome, ambiguousBlock: false };
@@ -522,11 +583,17 @@ export class MemoryRepository implements Repository {
   async sendInitialReminder(
     caseId: string,
     actor: MutationActor,
-    options: { forceRetryAfterAmbiguous?: boolean } = {},
+    options: { forceRetryAfterAmbiguous?: boolean; invoiceId?: string | null } = {},
   ) {
     const kase = mock.getCase(caseId);
     if (!kase) throw new Error(`sendInitialReminder: case ${caseId} not found`);
-    if (kase.status !== "active") {
+    // With the live WhatsApp provider configured, initial reminders are tracked
+    // PER INVOICE (src/domain/reminder-stage.ts): the case stays in its reminder
+    // phase while other invoices still await theirs. Without it (email only /
+    // demo) the original once-per-case, active-only rule is unchanged.
+    const invoiceLevel = this.whatsAppEnv().liveConfigured;
+    const inReminderPhase = kase.status === "active" || (invoiceLevel && kase.status === "initial_communication_sent");
+    if (!inReminderPhase) {
       throw new Error(
         `sendInitialReminder: case ${caseId} is "${kase.status}", not "active" -- nothing to send`,
       );
@@ -546,14 +613,57 @@ export class MemoryRepository implements Repository {
       invoiceNumber: invoice?.invoiceNumber ?? null,
     });
 
-    const channels: { channel: "whatsapp" | "email"; to: string; templateKey: string; templateVersion: number; subject: string | null }[] = [];
-    if (debtor?.mobile) {
-      channels.push({ channel: "whatsapp", to: debtor.mobile, templateKey: "reminder_initial_v3", templateVersion: 3, subject: null });
+    let alreadyRemindedInvoiceIds: ReadonlySet<string> = new Set();
+    let emailInitialAlreadySent = false;
+    if (invoiceLevel) {
+      const before = await computeReminderStage(this, caseId);
+      alreadyRemindedInvoiceIds = new Set(before.states.filter((r) => r.initialSource === "whatsapp").map((r) => r.invoiceId));
+      emailInitialAlreadySent = hasAcceptedEmailInitial(caseId, mock.listCommunicationsForCase(caseId));
     }
-    if (debtor?.email) {
-      channels.push({ channel: "email", to: debtor.email, templateKey: "reminder_initial_email_v1", templateVersion: 1, subject });
+
+    // Same shared planner as SupabaseRepository (src/domain/whatsapp-reminder.ts)
+    // so the two repositories cannot drift on a WhatsApp safety rule.
+    const whatsAppPlan = await planWhatsAppReminder({
+      caseId,
+      debtor,
+      org,
+      invoices: mock.listInvoicesForCase(caseId),
+      selectedInvoiceId: options.invoiceId,
+      alreadyRemindedInvoiceIds,
+      isProduction: isProductionRuntime(),
+      env: this.whatsAppEnv(),
+      legacyBody: body,
+    });
+
+    const channels: {
+      channel: "whatsapp" | "email";
+      to: string;
+      templateKey: string;
+      templateVersion: number;
+      subject: string | null;
+      body: string;
+      templateParams?: string[];
+      idempotencyKey?: string;
+    }[] = [];
+    const warnings: string[] = [];
+    if (whatsAppPlan.kind === "attempt") channels.push(whatsAppPlan.entry);
+    if (whatsAppPlan.kind === "skipped") warnings.push(`WhatsApp reminder not sent: ${whatsAppPlan.reason}.`);
+    // The initial email is case-level and sent at most once per case: a
+    // reminder for another invoice must never repeat it.
+    if (debtor?.email && !emailInitialAlreadySent) {
+      channels.push({ channel: "email", to: debtor.email, templateKey: "reminder_initial_email_v1", templateVersion: 1, subject, body });
     }
     if (channels.length === 0) {
+      if (whatsAppPlan.kind === "skipped") {
+        throw new Error(
+          emailInitialAlreadySent && debtor?.email
+            ? `sendInitialReminder: WhatsApp reminder not sent: ${whatsAppPlan.reason}. The initial email was already sent for this case.`
+            : `sendInitialReminder: WhatsApp reminder not sent: ${whatsAppPlan.reason}. The debtor has no email on file, so there is no other channel to send on.`,
+        );
+      }
+      if (emailInitialAlreadySent) {
+        throw new Error("sendInitialReminder: the initial reminder was already sent by email and there is no WhatsApp reminder left to send for this debtor.");
+      }
       throw new Error(
         `sendInitialReminder: case ${caseId}'s debtor has no mobile or email on file -- nothing to send. Correct the debtor's contact details first.`,
       );
@@ -570,8 +680,10 @@ export class MemoryRepository implements Repository {
           c.templateKey,
           c.templateVersion,
           c.subject,
-          body,
+          c.body,
           options.forceRetryAfterAmbiguous ?? false,
+          c.templateParams,
+          c.idempotencyKey,
         ),
       );
     }
@@ -581,7 +693,19 @@ export class MemoryRepository implements Repository {
     const allFailedTerminally = results.every((r) => r.outcome !== "success" && r.outcome !== "already_sent") && !anyAmbiguous;
 
     let updatedCase: RecoveryCase;
-    if (anySuccess) {
+    const stage = anySuccess && invoiceLevel ? (await computeReminderStage(this, caseId, results.map((r) => r.communication))).summary : null;
+    if (anySuccess && stage && stage.status !== "active") {
+      const staged = applyReminderStage(kase, stage, { at: new Date(), detail: "Initial reminder accepted" });
+      updatedCase = mock.mutateCase(caseId, staged.updatedCase);
+      mock.appendAudit({
+        action: "reminder.sent",
+        entity: "recovery_case",
+        entityId: caseId,
+        reason: staged.note,
+        actorId: actor.actorId,
+        actorRole: actor.actorRole,
+      });
+    } else if (anySuccess && kase.status === "active") {
       const sent = applyReminderSent(kase);
       const deliveredAt = new Date();
       const delivered = applyReminderDelivered(sent.updatedCase, deliveredAt);
@@ -594,7 +718,9 @@ export class MemoryRepository implements Repository {
         actorId: actor.actorId,
         actorRole: actor.actorRole,
       });
-    } else if (allFailedTerminally) {
+    } else if (anySuccess) {
+      updatedCase = kase; // already past the initial stage; nothing new advances the case aggregate
+    } else if (allFailedTerminally && kase.status === "active") {
       const sentPatch = applyReminderSent(kase);
       const failed = applyReminderDeliveryFailed(sentPatch.updatedCase, true);
       updatedCase = mock.mutateCase(caseId, failed.updatedCase);
@@ -610,7 +736,116 @@ export class MemoryRepository implements Repository {
       updatedCase = kase;
     }
 
-    return tick({ case: updatedCase, communications: results.map((r) => r.communication), ambiguous: anyAmbiguous });
+    return tick({ case: updatedCase, communications: results.map((r) => r.communication), ambiguous: anyAmbiguous, warnings });
+  }
+
+  /* ---- WhatsApp V1 message families ---------------------------------- */
+
+  private whatsAppEnv(): LiveSendEnv {
+    return {
+      // Demo data can never take the live path unless a test explicitly opts in.
+      liveConfigured: this.options.allowLiveWhatsApp === true && isLiveWhatsAppConfigured(),
+      campaignConfigured: isWhatsAppCampaignConfigured,
+      isAutomationEnabled: async () => (await this.getAutomationState()).enabled,
+    };
+  }
+
+  private whatsAppFlow(actor: MutationActor | null): WhatsAppFlowDeps {
+    return {
+      source: this,
+      env: () => this.whatsAppEnv(),
+      sendChannel: async (caseId, entry, force) => {
+        const kase = mock.getCase(caseId)!;
+        const r = await this.sendReminderChannel(
+          caseId, kase.organisationId, "whatsapp", entry.to, entry.templateKey, entry.templateVersion,
+          null, entry.body, force, entry.templateParams, entry.idempotencyKey,
+        );
+        return r;
+      },
+      advanceAfterFollowUp: async (kase, summary, detail) => {
+        const sent =
+          summary && summary.status !== "active"
+            ? applyReminderStage(kase, summary, { at: new Date(), detail })
+            : applyFollowUpSent(kase, new Date());
+        const updated = mock.mutateCase(kase.id, sent.updatedCase);
+        mock.appendAudit({
+          action: "reminder.followup_sent",
+          entity: "recovery_case",
+          entityId: kase.id,
+          reason: sent.note,
+          actorId: actor?.actorId ?? null,
+          actorRole: actor?.actorRole ?? null,
+        });
+        return updated;
+      },
+    };
+  }
+
+  async listPromisesForCase(caseId: string) {
+    return tick(mock.listPromisesForCase(caseId));
+  }
+
+  async recordPaymentPromise(caseId: string, input: RecordPaymentPromiseInput, actor: MutationActor) {
+    const kase = mock.getCase(caseId);
+    if (!kase) throw new Error(`recordPaymentPromise: case ${caseId} not found`);
+    const dateError = validatePromiseDate(input.promisedOn, new Date());
+    if (dateError) throw new Error(dateError);
+
+    const invoices = mock.listInvoicesForCase(caseId);
+    let invoiceId = input.invoiceId;
+    if (invoiceId && !invoices.some((i) => i.id === invoiceId)) {
+      throw new Error("The selected invoice does not belong to this case");
+    }
+    if (!invoiceId && invoices.length === 1) invoiceId = invoices[0].id;
+    if (!invoiceId && invoices.length > 1) {
+      throw new Error("Choose the invoice this promise relates to (the case has several invoices)");
+    }
+    const invoice = invoices.find((i) => i.id === invoiceId);
+    if (input.promisedAmountPaise && invoice && input.promisedAmountPaise > invoice.outstandingBalance) {
+      throw new Error("The promised amount exceeds the invoice's outstanding balance");
+    }
+    if (input.sourceReplyId && !mock.listDebtorRepliesForCase(caseId).some((r) => r.id === input.sourceReplyId)) {
+      throw new Error("The linked reply does not belong to this case");
+    }
+
+    const applied = applyPromiseRecorded(kase, input.promisedOn); // throws unless awaiting the debtor's response
+    const promise = mock.insertPromiseSupersedingActive({
+      id: `promise-${nanoid(8)}`,
+      organisationId: kase.organisationId,
+      caseId,
+      invoiceId: invoiceId ?? null,
+      promisedOn: input.promisedOn,
+      promisedAmount: input.promisedAmountPaise ?? null,
+      sourceReplyId: input.sourceReplyId ?? null,
+      recordedById: actor.actorId,
+    });
+    const updatedCase = mock.mutateCase(caseId, applied.updatedCase);
+    // Date + indicators only (mirrors the RPC's audit metadata).
+    mock.appendAudit({
+      action: "promise.recorded",
+      entity: "recovery_case",
+      entityId: caseId,
+      reason: applied.note,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
+    });
+    return tick({ promise, case: updatedCase });
+  }
+
+  async getWhatsAppOffers(caseId: string) {
+    return getWhatsAppOffersFlow(this.whatsAppFlow(null), caseId);
+  }
+
+  async sendWhatsAppMessage(
+    caseId: string,
+    input: { eventKey: string; forceRetryAfterAmbiguous?: boolean },
+    actor: MutationActor,
+  ) {
+    return sendWhatsAppMessageFlow(this.whatsAppFlow(actor), {
+      caseId,
+      eventKey: input.eventKey,
+      forceRetryAfterAmbiguous: input.forceRetryAfterAmbiguous ?? false,
+    });
   }
 
   async prepareGstNotification(caseId: string, input: GstComposeInput, actor: MutationActor) {
@@ -1125,7 +1360,8 @@ export class MemoryRepository implements Repository {
     if (!invoice) throw new Error(`correctInvoiceOcr: invoice ${invoiceId} not found on case ${caseId}`);
 
     const outstandingBalance = corrections.outstandingBalance ?? invoice.outstandingBalance;
-    const corrected = applyOcrCorrected({ ...kase, principalOutstanding: outstandingBalance });
+    const gates = await this.getActivationGates(caseId);
+    const corrected = applyOcrCorrected({ ...kase, principalOutstanding: outstandingBalance }, gates);
     const updatedCase = mock.mutateCase(caseId, {
       ...corrected.updatedCase,
       principalOutstanding: outstandingBalance,
@@ -1142,6 +1378,39 @@ export class MemoryRepository implements Repository {
     });
 
     return tick({ case: updatedCase, invoice });
+  }
+
+  private activationEvidence(caseId: string) {
+    const invoiceIds = mock.listInvoicesForCase(caseId).map((i) => i.id);
+    const relevant = mock.AUDIT_LOG.filter((e) => (ACTIVATION_EVIDENCE_ACTIONS as readonly string[]).includes(e.action));
+    return activationEvidenceFrom(relevant, caseId, invoiceIds);
+  }
+
+  async getActivationGates(caseId: string): Promise<ActivationGates> {
+    if (!mock.getCase(caseId)) throw new Error(`getActivationGates: case ${caseId} not found`);
+    return tick(
+      evaluateActivationGates({ invoices: mock.listInvoicesForCase(caseId), evidence: this.activationEvidence(caseId), now: new Date() }),
+    );
+  }
+
+  async recordActivationGate(caseId: string, gate: "client_certification" | "staff_validation", reason: string, actor: MutationActor) {
+    const kase = mock.getCase(caseId);
+    if (!kase) throw new Error(`recordActivationGate: case ${caseId} not found`);
+    if (!reason.trim()) throw new Error("recordActivationGate: a reason is required");
+    if (!isPreActivation(kase.status)) {
+      throw new Error(`recordActivationGate: case is already "${kase.status.replace(/_/g, " ")}" -- activation gates apply only before activation`);
+    }
+    if (gate === "staff_validation" && kase.status !== "under_validation") {
+      throw new Error("recordActivationGate: staff validation of a case awaiting correction is given by confirming the corrected invoice fields");
+    }
+    const action = gate === "client_certification" ? "case.client_certified" : "case.staff_validated";
+    // Evidence is the audit event itself; write it, then evaluate WITH it.
+    mock.appendAudit({ action, entity: "recovery_case", entityId: caseId, reason, actorId: actor.actorId, actorRole: actor.actorRole });
+    const gates = evaluateActivationGates({ invoices: mock.listInvoicesForCase(caseId), evidence: this.activationEvidence(caseId), now: new Date() });
+    // A case still awaiting correction only records the certification; the OCR confirmation evaluates everything.
+    const applied = kase.status === "correction_required" ? { updatedCase: kase, note: "", activated: false } : applyActivationGates(kase, gates);
+    const updatedCase = applied.updatedCase === kase ? kase : mock.mutateCase(caseId, { ...applied.updatedCase, activatedAt: applied.activated ? new Date().toISOString() : kase.activatedAt });
+    return tick({ case: updatedCase, gates, activated: applied.activated });
   }
 
   async listAuditLog(limit = 200) {

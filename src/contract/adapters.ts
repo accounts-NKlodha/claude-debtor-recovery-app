@@ -36,6 +36,15 @@ export interface SendMessageInput {
   body: string;
   /** attach a secure expiring link rather than a raw file (PRD §8). */
   secureLinkDocumentIds?: UUID[];
+  /**
+   * Ordered approved-template parameter values (AiSensy WhatsApp production
+   * integration task) -- required by template-based providers (AiSensy)
+   * whose approved templates take positional substitution values, not free
+   * text. `body` is still populated for these sends too, as a
+   * human-readable durable-storage/audit rendering; it is never the literal
+   * wire payload for a template-based channel.
+   */
+  templateParams?: string[];
 }
 
 export interface MessagingAdapter {

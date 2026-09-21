@@ -25,7 +25,11 @@ flowchart TD
   I -- Payment confirmed --> Z[Recovered / close]
   I -- Promise --> P[Promise-to-pay tracking]
   I -- Dispute --> Q[Dispute/settlement task]
-  I -- No response after 24h --> J[GST eligibility route]
+  I -- No response after 24h --> FU[Follow-up reminder due - operator sends it]
+  FU --> FS[Follow-up sent - second 24-hour window]
+  FS --> I2{Payment/response?}
+  I2 -- Payment / promise / dispute --> Z
+  I2 -- No response after 24h --> J[GST eligibility route]
   J --> K[GST notification, human-assisted launch]
   K --> L[Start 7-day calendar timer]
   L --> M{Payment/response?}
@@ -52,6 +56,8 @@ flowchart TD
 - Messages scheduled for 11:00 AM.
 - No scheduled outbound messages on Sunday; roll to next permitted window.
 - 24-hour timer begins only after successful delivery of the initial reminder.
+- A follow-up WhatsApp reminder comes BEFORE any GST/MSME/statutory review: when the first 24-hour window elapses the follow-up becomes due (status stays `initial_communication_sent`, blocker "follow-up reminder due"); an operator sends it, the case moves to `follow_up_sent` and a second 24-hour window (the same rule/constant as the first) starts. Only silence after that window moves the case to GST eligibility review. All WhatsApp sends in V1 are operator-triggered; nothing sends unattended.
+- Note: no scheduler in the application fires the timer events yet; "follow-up due" is therefore derived at read time (window elapsed) rather than by a background transition.
 - Seven-day timer begins after the GST communication is successfully submitted/recorded; exact portal event must be confirmed.
 - Internal task overdue by 24 hours escalates to admin.
 
@@ -85,3 +91,25 @@ each step and the retry/idempotency guarantees.
 ## MSME ODR stages observed in video
 
 Claimant/Seller Details → Respondent/Buyer Details → Advocate Details (optional) → Statement of Claim → Documents → Checklist → Preview/Submit confirmation. Each stage should support save/resume and the final submitted snapshot should be immutable.
+
+## Invoice-level reminder stage vs case status (WhatsApp live path)
+
+WhatsApp reminders are per invoice; the case status is a single field. Source of truth is the durable communication history (`wa:initial-reminder:{case}:{invoice}`, `wa:followup-reminder:{case}:{invoice}:1`); the case status is a derived aggregate (`src/domain/reminder-stage.ts`):
+
+- `active` — no outstanding invoice reminded yet.
+- `initial_communication_sent` — at least one reminded, but some outstanding invoice still lacks its initial or follow-up.
+- `follow_up_sent` — every outstanding invoice has had both. Only then can GST/MSME escalation be considered, after each invoice's final 24h window (`escalationReadiness`).
+
+Each invoice has its own 24h windows. The single case-level email is sent at most once. Settled invoices drop out of the aggregate. Payment Closed states "Total Amount Paid" only when bank/cash payments recorded here sum exactly to the invoice total; otherwise it is unavailable and Payment Received is offered.
+
+## Activation gates (pre-activation cases)
+
+A case becomes `active` only when client certification, staff validation and the 60-day age gate all hold (`src/domain/activation.ts`).
+- **Staff validation:** the OCR "confirm corrected fields" action, or an explicit `case.staff_validated` record for an `under_validation` case.
+- **Client certification:** recorded by staff with a mandatory reason (`case.client_certified`). Certification recorded while the case still awaits correction is kept and honoured by the later OCR confirmation.
+- **60-day age gate:** derived, never recorded. Every outstanding invoice must be at least 60 IST calendar days past its due date; a missing due date fails the gate. The spec's "audited override" is not implemented.
+- Evidence is the append-only audit event; no schema change. Cases already past activation are never re-gated (correcting an invoice later does not reset the status).
+
+## Business dates
+
+Payment, promise and "today" dates are IST calendar dates (`istBusinessDate`), never the UTC date. `record_payment_row` stamps `received_on` with the IST date (migration 0024).

@@ -13,7 +13,7 @@ const isDev = process.env.NODE_ENV === "development";
 /**
  * Audit P2-4: responses disclosed `X-Powered-By: Next.js` and lacked CSP,
  * frame protection, MIME-sniff protection, referrer policy, and permissions
- * policy. HSTS is a production HTTPS-edge concern, not set here. Not
+ * policy. HSTS is set below for non-dev builds (the host also sets it on custom domains). Not
  * available in `output: "export"` (desktop) builds -- Next.js ignores
  * `headers()` for static export, so the Tauri shell relies on its own CSP
  * (src-tauri/tauri.conf.json) instead.
@@ -25,6 +25,8 @@ const isDev = process.env.NODE_ENV === "development";
  * policy (no 'unsafe-eval', no ws:) is unchanged.
  */
 const securityHeaders = [
+  // HTTPS-only for a year (go-live hardening). Skipped in dev so http://localhost is unaffected.
+  ...(isDev ? [] : [{ key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" }]),
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },

@@ -5,21 +5,20 @@
  * (`OcrExtractionField` in src/contract/adapters.ts) and is captured at
  * extraction time; this module only decides what staff *confirming* the
  * corrected fields does to the case.
+ *
+ * Confirming the fields satisfies the STAFF-VALIDATION gate and nothing
+ * else. Client certification and the 60-day age gate are evaluated from
+ * their real evidence (src/domain/activation.ts); if either is open the
+ * case waits in `under_validation` and is NOT activated.
  */
 
-import { advance, caseToWorkflowState, transitionToCasePatch } from "./workflow";
 import type { RecoveryCase } from "@/contract/types";
+import { applyActivationGates, type ActivationGates } from "./activation";
 
-type CaseInput = Parameters<typeof caseToWorkflowState>[0] & RecoveryCase;
-
-/**
- * Staff has reviewed and corrected the low-confidence extraction. This
- * satisfies the staff-validation gate; per the shared caseToWorkflowState
- * bridge (see workflow.ts) certification/age-gate are already treated as
- * cleared by this point in the demo model, so a correction_required case
- * moves straight to active.
- */
-export function applyOcrCorrected(kase: CaseInput): { updatedCase: RecoveryCase; note: string } {
-  const transition = advance(caseToWorkflowState(kase), { type: "STAFF_VALIDATED" });
-  return { updatedCase: { ...kase, ...transitionToCasePatch(transition.next) }, note: transition.note };
+export function applyOcrCorrected(
+  kase: RecoveryCase,
+  gates: Pick<ActivationGates, "clientCertified" | "ageGatePassed" | "missing">,
+): { updatedCase: RecoveryCase; note: string; activated: boolean } {
+  const withValidation = { ...gates, staffValidated: true, missing: gates.missing.filter((m) => m !== "staff validation") };
+  return applyActivationGates(kase, withValidation);
 }

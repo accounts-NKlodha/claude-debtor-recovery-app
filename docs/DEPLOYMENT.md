@@ -1,5 +1,9 @@
 # Deploying Debtrecover at `debtor.nklodha.in`
 
+> **Hosting decision (2026-09-21):** Lovable cannot host this app (it runs TanStack Start on Cloudflare Workers, cannot import an
+> existing Next.js repo, and does not support Nodemailer SMTP). Production target: **Vercel (Pro)** with `vercel.json` (region `syd1`),
+> or the self-hosted Node server described below. Evidence and go-live checklist: [`docs/hosting-assessment/index.md`](hosting-assessment/index.md).
+
 Target: self-hosted Next.js server behind the existing `nklodha.in` reverse proxy,
 with Supabase for Postgres + Auth + Storage. This is the "web" target of the
 same codebase that produces the Tauri desktop app.

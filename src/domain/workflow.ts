@@ -43,6 +43,7 @@ export type WorkflowEvent =
   | { type: "REMINDER_DELIVERY_FAILED"; bothChannels: boolean }
   | { type: "REPLY_CLASSIFIED"; classification: "payment_made" | "promise_to_pay" | "dispute" | "document_request" | "settlement_offer" | "unrelated" | "unclear" }
   | { type: "TIMER_24H_ELAPSED" }
+  | { type: "FOLLOW_UP_SENT" }
   | { type: "GST_ELIGIBILITY_DECIDED"; route: EligibilityRoute }
   | { type: "GST_NOTIFICATION_PREPARED" }
   | { type: "GST_NOTIFICATION_FILED" }
@@ -230,6 +231,37 @@ export function advance(state: WorkflowState, event: WorkflowEvent): Transition 
         };
       }
       if (event.type === "REPLY_CLASSIFIED") return handleReply(state, event.classification);
+      // The follow-up reminder comes BEFORE any GST/MSME/statutory review
+      // (approved WhatsApp V1 business rule): an elapsed first response
+      // window only marks the follow-up as due; the case stays here until an
+      // operator sends it (FOLLOW_UP_SENT).
+      if (event.type === "TIMER_24H_ELAPSED") {
+        return {
+          next: set(state, {
+            waitingOn: "staff",
+            blocker: "No response in 24h — follow-up reminder due",
+            nextAction: "Send follow-up reminder (operator-controlled)",
+          }),
+          note: "No response in 24h — follow-up reminder due (GST/MSME review only follows the follow-up)",
+          effect: null,
+        };
+      }
+      if (event.type === "FOLLOW_UP_SENT") {
+        return {
+          next: set(state, {
+            status: "follow_up_sent",
+            waitingOn: "system",
+            blocker: "Follow-up reminder delivered — 24-hour response window running",
+            nextAction: "Evaluate reply/payment after 24h",
+          }),
+          note: "Follow-up reminder sent — second 24h response window started",
+          effect: { kind: "start_timer", timer: "reminder_24h" },
+        };
+      }
+      break;
+
+    case "follow_up_sent":
+      if (event.type === "REPLY_CLASSIFIED") return handleReply(state, event.classification);
       if (event.type === "TIMER_24H_ELAPSED") {
         return {
           next: set(state, {
@@ -238,7 +270,7 @@ export function advance(state: WorkflowState, event: WorkflowEvent): Transition 
             blocker: "Confirm creditor + debtor GST registration",
             nextAction: "Decide GST route",
           }),
-          note: "No response in 24h — moving to GST eligibility review",
+          note: "No response after the follow-up reminder — moving to GST eligibility review",
           effect: { kind: "raise_task", task: "policy_gate", waitingOn: "staff", urgent: false },
         };
       }

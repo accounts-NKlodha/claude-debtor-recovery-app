@@ -34,6 +34,10 @@ export interface Organisation {
   creditorGstin: string | null;
   udyamNumber: string | null;
   jitoMember: boolean;
+  /** Creditor's UPI ID (VPA) shown to debtors in WhatsApp reminders. Set together with upiPayeeName or not at all. */
+  upiId: string | null;
+  /** Payee name that appears against the UPI ID. */
+  upiPayeeName: string | null;
   createdAt: Timestamp;
 }
 
@@ -136,6 +140,28 @@ export interface PaymentRecord {
   clientConfirmed: boolean;
   /** append-only; allocations are a derived projection (invariant §15.4). */
   createdAt: Timestamp;
+}
+
+/**
+ * A durable promise-to-pay (WhatsApp V1). One row per promise; when the
+ * debtor changes the date the earlier promise is marked `superseded` --
+ * never overwritten -- and the new one links back via `supersedesId`.
+ */
+export interface PaymentPromise {
+  id: UUID;
+  organisationId: UUID;
+  caseId: UUID;
+  /** null = case-level promise; a WhatsApp commitment reminder still needs an unambiguous invoice. */
+  invoiceId: UUID | null;
+  /** ISO date (YYYY-MM-DD). */
+  promisedOn: string;
+  promisedAmount: Paise | null;
+  status: "active" | "superseded";
+  sourceReplyId: UUID | null;
+  supersedesId: UUID | null;
+  recordedById: UUID;
+  createdAt: Timestamp;
+  supersededAt: Timestamp | null;
 }
 
 export interface WorkflowTask {

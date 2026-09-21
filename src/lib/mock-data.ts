@@ -5,6 +5,7 @@
  */
 
 import type {
+  PaymentPromise,
   CaseHearing,
   Communication,
   CommunicationDelivery,
@@ -38,6 +39,8 @@ export const ORGANISATIONS: Organisation[] = [
     creditorGstin: "08AACCA1234F1Z5",
     udyamNumber: "UDYAM-RJ-17-0012345",
     jitoMember: true,
+    upiId: null,
+    upiPayeeName: null,
     createdAt: iso(-420),
   },
   {
@@ -47,6 +50,8 @@ export const ORGANISATIONS: Organisation[] = [
     creditorGstin: "08AABCV5678K1Z2",
     udyamNumber: "UDYAM-RJ-17-0067890",
     jitoMember: false,
+    upiId: null,
+    upiPayeeName: null,
     createdAt: iso(-360),
   },
   {
@@ -56,6 +61,8 @@ export const ORGANISATIONS: Organisation[] = [
     creditorGstin: "08AADCS9012M1Z9",
     udyamNumber: null,
     jitoMember: true,
+    upiId: null,
+    upiPayeeName: null,
     createdAt: iso(-300),
   },
   {
@@ -65,6 +72,8 @@ export const ORGANISATIONS: Organisation[] = [
     creditorGstin: null,
     udyamNumber: "UDYAM-RJ-17-0099001",
     jitoMember: false,
+    upiId: null,
+    upiPayeeName: null,
     createdAt: iso(-210),
   },
 ];
@@ -830,6 +839,29 @@ export function openTasks() {
  * mutations, same as production). */
 
 export const PAYMENT_ALLOCATIONS: PaymentAllocation[] = [];
+
+/** Durable promise-to-pay rows (0023). History is preserved: a new promise supersedes, never overwrites. */
+export const PAYMENT_PROMISES: PaymentPromise[] = [];
+export function listPromisesForCase(caseId: string) {
+  return PAYMENT_PROMISES.filter((p) => p.caseId === caseId).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+}
+/** Matches record_payment_promise(): marks the active promise for the same case+invoice superseded, then inserts. */
+export function insertPromiseSupersedingActive(
+  promise: Omit<PaymentPromise, "createdAt" | "status" | "supersedesId" | "supersededAt">,
+): PaymentPromise {
+  const prevIdx = PAYMENT_PROMISES.findIndex(
+    (p) => p.caseId === promise.caseId && (p.invoiceId ?? null) === (promise.invoiceId ?? null) && p.status === "active",
+  );
+  let supersedesId: string | null = null;
+  const now = new Date().toISOString();
+  if (prevIdx !== -1) {
+    supersedesId = PAYMENT_PROMISES[prevIdx].id;
+    PAYMENT_PROMISES[prevIdx] = { ...PAYMENT_PROMISES[prevIdx], status: "superseded", supersededAt: now };
+  }
+  const created: PaymentPromise = { ...promise, status: "active", supersedesId, createdAt: now, supersededAt: null };
+  PAYMENT_PROMISES.push(created);
+  return created;
+}
 export const DD_RECORDS: DdRecord[] = [];
 export const CASE_HEARINGS: CaseHearing[] = [];
 export const DEBTOR_REPLIES: DebtorReply[] = [];
@@ -1194,6 +1226,7 @@ export function completeDeliveryAttempt(input: {
   adapterOutcome: AdapterOutcome | null;
   providerMessageId: string | null;
   errorDetail: string | null;
+  provider: string;
 }): { delivery: CommunicationDelivery; communication: Communication } {
   const idx = COMMUNICATION_DELIVERIES.findIndex((d) => d.id === input.deliveryId);
   if (idx === -1) throw new Error(`completeDeliveryAttempt: delivery ${input.deliveryId} not found`);
@@ -1209,7 +1242,7 @@ export function completeDeliveryAttempt(input: {
     ...existing,
     status: input.status,
     adapterOutcome: input.adapterOutcome,
-    provider: "gmail-smtp",
+    provider: input.provider,
     providerMessageId: input.providerMessageId,
     errorDetail: input.errorDetail,
   };
@@ -1562,6 +1595,18 @@ export function findOrgByName(legalEntityName: string) {
 export function insertOrganisation(org: Organisation) {
   ORGANISATIONS.push(org);
   return org;
+}
+
+/** Full-replace, matching update_organisation_payment_details(). */
+export function updateOrganisationPaymentDetails(
+  id: string,
+  upiId: string | null,
+  upiPayeeName: string | null,
+): Organisation | undefined {
+  const idx = ORGANISATIONS.findIndex((o) => o.id === id);
+  if (idx === -1) return undefined;
+  ORGANISATIONS[idx] = { ...ORGANISATIONS[idx], upiId, upiPayeeName };
+  return ORGANISATIONS[idx];
 }
 
 export function markPaymentConfirmed(id: string) {

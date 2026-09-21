@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import { CaseDetail, type CaseDetailVM } from "@/components/screens/case-detail";
 import { getRepo } from "@/server/repo";
+import { toOfferView } from "@/domain/whatsapp-messages";
+import { isPreActivation } from "@/domain/activation";
 
 // Client users cannot reach this page at all -- it lives under (internal),
 // gated to staff/admin sessions only by the shared layout
@@ -18,7 +20,7 @@ export default async function CaseDetailPage({
   const kase = await repo.getCase(id);
   if (!kase) notFound();
 
-  const [debtor, org, invoices, communications, payments, tasks, allocations, ddRecord, hearings, debtorReplies] =
+  const [debtor, org, invoices, communications, payments, tasks, allocations, ddRecord, hearings, debtorReplies, promises, whatsAppOffers, activationGates] =
     await Promise.all([
       repo.getDebtor(kase.debtorId),
       repo.getOrg(kase.organisationId),
@@ -30,6 +32,12 @@ export default async function CaseDetailPage({
       repo.getDdRecord(id),
       repo.listHearingsForCase(id),
       repo.listDebtorRepliesForCase(id),
+      // View-only: must not take the page down (e.g. before migration 0023 is applied).
+      repo.listPromisesForCase(id).catch(() => []),
+      // View-only: a failure here must never take the case page down.
+      repo.getWhatsAppOffers(id).catch(() => []),
+      // View-only, and only meaningful before activation.
+      isPreActivation(kase.status) ? repo.getActivationGates(id).catch(() => null) : Promise.resolve(null),
     ]);
 
   const vm: CaseDetailVM = {
@@ -50,6 +58,9 @@ export default async function CaseDetailPage({
     ddRecord,
     hearings,
     debtorReplies,
+    promises,
+    whatsAppOffers: whatsAppOffers.map(toOfferView),
+    activationGates,
   };
 
   return <CaseDetail vm={vm} />;

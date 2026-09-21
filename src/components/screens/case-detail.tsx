@@ -18,10 +18,13 @@ import type {
   DebtorReply,
   Invoice,
   PaymentAllocation,
+  PaymentPromise,
   PaymentRecord,
   RecoveryCase,
   WorkflowTask,
 } from "@/contract/types";
+import type { WhatsAppOfferView } from "@/domain/whatsapp-messages";
+import { PROMISE_ALLOWED_STATUSES } from "@/domain/promise";
 import { formatInr } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -32,9 +35,13 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { LinkButton } from "@/components/ui/link-button";
 import { SpotlightCard } from "@/components/ui/spotlight-card";
 import { SendReminderButton } from "./send-reminder-button";
+import { WhatsAppMessagesPanel } from "./whatsapp-messages-panel";
+import { PaymentPromiseForm } from "./payment-promise-form";
 import { DebtorContactPanel } from "./debtor-contact-panel";
 import { DdHearingActions } from "./dd-hearing-actions";
 import { OcrReviewPanel } from "./ocr-review-panel";
+import { ActivationGatesPanel } from "./activation-gates-panel";
+import type { ActivationGates } from "@/domain/activation";
 import { ResolveTaskButton } from "./resolve-task-button";
 import { DebtorReplyForm } from "./debtor-reply-form";
 
@@ -56,6 +63,11 @@ export interface CaseDetailVM {
   ddRecord: DdRecord | undefined;
   hearings: CaseHearing[];
   debtorReplies: DebtorReply[];
+  /** Every WhatsApp message family evaluated for this case (server-only send details already stripped). */
+  whatsAppOffers: WhatsAppOfferView[];
+  promises: PaymentPromise[];
+  /** Only loaded for cases that are not yet activated. */
+  activationGates: ActivationGates | null;
 }
 
 function fmtDate(s: string | null) {
@@ -122,11 +134,23 @@ export function CaseDetail({ vm }: { vm: CaseDetailVM }) {
                 email={vm.debtorEmail}
                 mobile={vm.debtorMobile}
               />
-              <SendReminderButton caseId={kase.id} />
+              <SendReminderButton
+                caseId={kase.id}
+                invoices={vm.invoices.map((i) => ({ id: i.id, invoiceNumber: i.invoiceNumber }))}
+              />
             </div>
+          ) : null}
+          <WhatsAppMessagesPanel caseId={kase.id} offers={vm.whatsAppOffers} />
+          {(PROMISE_ALLOWED_STATUSES as readonly string[]).includes(kase.status) ? (
+            <PaymentPromiseForm
+              caseId={kase.id}
+              invoices={vm.invoices.map((i) => ({ id: i.id, invoiceNumber: i.invoiceNumber }))}
+            />
           ) : null}
           <DdHearingActions caseId={kase.id} status={kase.status} ddRecord={vm.ddRecord} hearings={vm.hearings} />
         </div>
+
+        {vm.activationGates ? <ActivationGatesPanel caseId={kase.id} status={kase.status} gates={vm.activationGates} /> : null}
 
         {kase.status === "correction_required" && vm.invoices[0] ? (
           <OcrReviewPanel caseId={kase.id} invoice={vm.invoices[0]} />

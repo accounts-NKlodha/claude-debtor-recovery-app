@@ -293,4 +293,22 @@ export const RPC_MANIFEST: RpcManifestEntry[] = [
     introducedIn: "0020_debtor_contact_update.sql",
     notes: "Full-replace update of debtors.email/mobile; client must never reach this (staff/admin only, checked inside the function).",
   },
+  {
+    name: "update_organisation_payment_details",
+    classification: "public_rpc",
+    expectedAnonExecute: false,
+    expectedAuthenticatedExecute: true,
+    requiredAppRole: "admin",
+    introducedIn: "0022_organisation_upi_payment_details.sql",
+    notes: "Full-replace update of organisations.upi_id/upi_payee_name; admin-only (decides where debtors are told to pay), audited with change indicators only, never the values.",
+  },
+  {
+    name: "record_payment_promise",
+    classification: "public_rpc",
+    expectedAnonExecute: false,
+    expectedAuthenticatedExecute: true,
+    requiredAppRole: "staff",
+    introducedIn: "0023_followup_stage_and_payment_promises.sql",
+    notes: "Creates a promise-to-pay row, supersedes (never overwrites) the prior active promise for the same case+invoice, optionally applies the caller-computed workflow patch, audits date + indicators only.",
+  },
 ];

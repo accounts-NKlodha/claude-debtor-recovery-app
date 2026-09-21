@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { getRepo } from "@/server/repo";
 import { authorizeAdminMutation } from "@/lib/auth/session";
-import { createOrganisationSchema } from "@/contract/schemas";
+import { createOrganisationSchema, organisationPaymentDetailsSchema } from "@/contract/schemas";
+import type { Organisation } from "@/contract/types";
 import type { CreateOrganisationResult } from "@/server/repository";
 
 export interface CreateOrganisationState {
@@ -73,5 +74,54 @@ export async function createOrganisationAction(
     return { result, error: null };
   } catch (e: unknown) {
     return { result: null, error: e instanceof Error ? e.message : "Failed to add the client" };
+  }
+}
+
+export interface UpdateOrganisationPaymentDetailsState {
+  result: Organisation | null;
+  error: string | null;
+}
+
+/**
+ * Set or clear a client organisation's UPI payment details (V1 payment
+ * method = UPI only), which the V2 WhatsApp reminder prints to debtors.
+ *
+ * Admin-only, server-enforced: these fields decide where a debtor is told to
+ * send money, so they sit under the same Admin "Configuration" boundary as
+ * creating a client (see createOrganisationAction). Requires a reason and is
+ * audited by the RPC with change indicators only -- never the UPI values.
+ * Validation runs server-side regardless of client checks, and the action
+ * always RETURNS its outcome instead of throwing (same convention as the
+ * other form actions here).
+ */
+export async function updateOrganisationPaymentDetailsAction(
+  _prevState: UpdateOrganisationPaymentDetailsState,
+  formData: FormData,
+): Promise<UpdateOrganisationPaymentDetailsState> {
+  const organisationId = String(formData.get("organisationId") ?? "").trim();
+  if (!organisationId) return { result: null, error: "Missing client." };
+
+  const parsed = organisationPaymentDetailsSchema.safeParse({
+    upiId: formData.get("upiId"),
+    upiPayeeName: formData.get("upiPayeeName"),
+    reason: formData.get("reason"),
+  });
+  if (!parsed.success) {
+    return { result: null, error: parsed.error.issues[0]?.message ?? "Invalid payment details" };
+  }
+
+  let actor;
+  try {
+    actor = await authorizeAdminMutation();
+  } catch {
+    return { result: null, error: "You do not have permission to perform this action." };
+  }
+
+  try {
+    const result = await getRepo().updateOrganisationPaymentDetails(organisationId, parsed.data, actor);
+    revalidatePath("/clients");
+    return { result, error: null };
+  } catch (e: unknown) {
+    return { result: null, error: e instanceof Error ? e.message : "Failed to save payment details" };
   }
 }

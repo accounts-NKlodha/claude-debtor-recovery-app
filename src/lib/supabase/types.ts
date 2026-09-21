@@ -38,6 +38,8 @@ export interface OrganisationRow {
   udyam_number: Nullable<string>;
   jito_member: boolean;
   is_firm: boolean;
+  upi_id: Nullable<string>;
+  upi_payee_name: Nullable<string>;
   created_at: string;
 }
 
@@ -272,6 +274,21 @@ export interface DebtorReplyRow {
   received_at: string;
 }
 
+export interface PaymentPromiseRow {
+  id: string;
+  organisation_id: string;
+  case_id: string;
+  invoice_id: Nullable<string>;
+  promised_on: string;
+  promised_amount: Nullable<number>;
+  status: "active" | "superseded";
+  source_reply_id: Nullable<string>;
+  supersedes_id: Nullable<string>;
+  recorded_by_id: string;
+  created_at: string;
+  superseded_at: Nullable<string>;
+}
+
 interface TableShape<Row, InsertOptional extends keyof Row> {
   Row: Row;
   Insert: WithDefaults<Row, InsertOptional>;
@@ -281,7 +298,7 @@ interface TableShape<Row, InsertOptional extends keyof Row> {
 export interface Database {
   public: {
     Tables: {
-      organisations: TableShape<OrganisationRow, "id" | "created_at" | "jito_member" | "is_firm">;
+      organisations: TableShape<OrganisationRow, "id" | "created_at" | "jito_member" | "is_firm" | "upi_id" | "upi_payee_name">;
       app_users: TableShape<AppUserRow, "id" | "created_at">;
       user_organisations: TableShape<UserOrganisationRow, "created_at">;
       debtors: TableShape<
@@ -333,6 +350,7 @@ export interface Database {
       case_hearings: TableShape<CaseHearingRow, "id" | "status" | "created_at" | "updated_at">;
       calendar_events: TableShape<CalendarEventRow, "id" | "created_at">;
       debtor_replies: TableShape<DebtorReplyRow, "id" | "received_at">;
+      payment_promises: TableShape<PaymentPromiseRow, "id" | "created_at" | "status" | "superseded_at">;
     };
     Views: Record<string, never>;
     Functions: {
@@ -430,6 +448,19 @@ export interface Database {
         };
         Returns: OrganisationRow;
       };
+      /** Admin-only (checked inside the function); full-replace update of the
+       * creditor's UPI ID/payee name, audited with change indicators only --
+       * see 0022_organisation_upi_payment_details.sql. */
+      update_organisation_payment_details: {
+        Args: {
+          p_organisation_id: string;
+          p_upi_id: string | null;
+          p_upi_payee_name: string | null;
+          p_reason: string;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: OrganisationRow;
+      };
       /** Internal-only in Postgres (no grant to `authenticated`) -- not
        * called directly from the client; listed here only so its shape is
        * documented alongside the RPCs that invoke it via `perform`. */
@@ -516,6 +547,20 @@ export interface Database {
         };
         Returns: { case: RecoveryCaseRow; reply: DebtorReplyRow };
       };
+      /** Staff/admin; records a promise-to-pay, superseding (not overwriting) the prior active one -- see 0023. */
+      record_payment_promise: {
+        Args: {
+          p_case_id: string;
+          p_invoice_id: string | null;
+          p_promised_on: string;
+          p_promised_amount: number | null;
+          p_source_reply_id: string | null;
+          p_case: Record<string, unknown> | null;
+          p_reason: string;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: { promise: PaymentPromiseRow; case: RecoveryCaseRow };
+      };
       begin_communication_send: {
         Args: {
           p_case_id: string;
@@ -550,6 +595,7 @@ export interface Database {
           p_case_id: string;
           p_case: Record<string, unknown> | null;
           p_reason: string | null;
+          p_provider: string;
           p_expected_actor_id?: string | null;
         };
         Returns: { delivery: CommunicationDeliveryRow; communication: CommunicationRow; case: RecoveryCaseRow };

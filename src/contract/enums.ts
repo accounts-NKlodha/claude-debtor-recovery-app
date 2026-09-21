@@ -11,6 +11,7 @@ export const CASE_STATUS = [
   "correction_required",
   "active",
   "initial_communication_sent",
+  "follow_up_sent",
   "contact_update_required",
   "payment_confirmation_required",
   "promise_to_pay",
@@ -35,6 +36,7 @@ export type CaseStatus = (typeof CASE_STATUS)[number];
 export const CLIENT_SAFE_LABEL: Partial<Record<CaseStatus, string>> = {
   active: "Case approved",
   initial_communication_sent: "Case approved",
+  follow_up_sent: "Case approved",
   gst_notification_filed: "GST complaint filed",
   msme_odr_filed: "MSME complaint filed",
   dispute_settlement: "Dispute in resolution",

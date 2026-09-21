@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { LinkButton } from "@/components/ui/link-button";
 import { SettingsScreen } from "@/components/screens/settings-screen";
+import { OrganisationPaymentDetailsForm } from "@/components/screens/organisation-payment-details";
 import { getRepo } from "@/server/repo";
 import { getAuthContext } from "@/lib/auth/session";
 
@@ -51,27 +52,46 @@ export default async function ClientsPolicyPage() {
           <CardDescription>{organisations.length} client organisation(s) on file.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-2 pt-0">
-          {organisations.map((o) => (
-            <div
-              key={o.id}
-              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
-            >
-              <div>
-                <p className="text-sm font-medium">{o.legalEntityName}</p>
-                <p className="text-xs text-muted-foreground">
-                  {o.clientCode} &middot; {caseCountByOrg.get(o.id) ?? 0} case
-                  {(caseCountByOrg.get(o.id) ?? 0) === 1 ? "" : "s"}
-                  {o.creditorGstin ? (
-                    <>
-                      {" "}
-                      &middot; <span className="font-mono">{o.creditorGstin}</span>
-                    </>
-                  ) : null}
-                </p>
+          {organisations.map((o) => {
+            const upiConfigured = Boolean(o.upiId && o.upiPayeeName);
+            return (
+              <div key={o.id} className="flex flex-col rounded-md border border-border px-3 py-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium">{o.legalEntityName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {o.clientCode} &middot; {caseCountByOrg.get(o.id) ?? 0} case
+                      {(caseCountByOrg.get(o.id) ?? 0) === 1 ? "" : "s"}
+                      {o.creditorGstin ? (
+                        <>
+                          {" "}
+                          &middot; <span className="font-mono">{o.creditorGstin}</span>
+                        </>
+                      ) : null}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {upiConfigured ? (
+                      <Badge tone="success">UPI configured</Badge>
+                    ) : (
+                      <Badge tone="warning">UPI not set — no WhatsApp reminders</Badge>
+                    )}
+                    {o.jitoMember ? <Badge tone="info">JITO — 5% fee</Badge> : <Badge tone="neutral">10% fee</Badge>}
+                  </div>
+                </div>
+                {isAdmin ? (
+                  <details className="mt-1 text-xs">
+                    <summary className="cursor-pointer text-muted-foreground">Payment details (UPI)</summary>
+                    <OrganisationPaymentDetailsForm
+                      organisationId={o.id}
+                      upiId={o.upiId}
+                      upiPayeeName={o.upiPayeeName}
+                    />
+                  </details>
+                ) : null}
               </div>
-              {o.jitoMember ? <Badge tone="info">JITO — 5% fee</Badge> : <Badge tone="neutral">10% fee</Badge>}
-            </div>
-          ))}
+            );
+          })}
         </CardContent>
       </Card>
 
