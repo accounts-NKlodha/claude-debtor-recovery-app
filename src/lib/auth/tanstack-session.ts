@@ -74,6 +74,18 @@ export async function getAuthContext(
   return resolveAuthContext(raw);
 }
 
+/** Mirrors src/lib/auth/session.ts's resolveClientOrganisationId exactly. */
+export async function resolveClientOrganisationId(fallbackOrganisations: { id: string }[]): Promise<string> {
+  const actor = await getAuthContext();
+  if (actor?.kind === "client") return actor.organisationId;
+
+  if (isProduction()) throw new UnauthenticatedError("Client session required");
+
+  const fallback = fallbackOrganisations[0];
+  if (!fallback) throw new UnauthenticatedError("No organisation available for demo client session");
+  return fallback.id;
+}
+
 export async function requireStaffSession() {
   return requireStaffContext(await getAuthContext());
 }

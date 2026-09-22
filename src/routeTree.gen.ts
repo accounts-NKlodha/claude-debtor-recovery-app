@@ -13,7 +13,18 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as InternalRouteImport } from './routes/_internal'
 import { Route as ClientRouteImport } from './routes/client'
 import { Route as SignInRouteImport } from './routes/sign-in'
+import { Route as InternalAuditRouteImport } from './routes/_internal/audit'
+import { Route as InternalCasesRouteImport } from './routes/_internal/cases'
+import { Route as InternalCommunicationsRouteImport } from './routes/_internal/communications'
 import { Route as InternalDashboardRouteImport } from './routes/_internal/dashboard'
+import { Route as InternalTodayRouteImport } from './routes/_internal/today'
+import { Route as ClientIndexRouteImport } from './routes/client/index'
+import { Route as ClientCasesRouteImport } from './routes/client/cases'
+import { Route as ClientConfirmationsRouteImport } from './routes/client/confirmations'
+import { Route as ClientStatementsRouteImport } from './routes/client/statements'
+import { Route as ClientUploadRouteImport } from './routes/client/upload'
+import { Route as InternalClientsIndexRouteImport } from './routes/_internal/clients/index'
+import { Route as InternalClientsNewRouteImport } from './routes/_internal/clients/new'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -34,50 +45,177 @@ const SignInRoute = SignInRouteImport.update({
   path: '/sign-in',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InternalAuditRoute = InternalAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => InternalRoute,
+} as any)
+const InternalCasesRoute = InternalCasesRouteImport.update({
+  id: '/cases',
+  path: '/cases',
+  getParentRoute: () => InternalRoute,
+} as any)
+const InternalCommunicationsRoute = InternalCommunicationsRouteImport.update({
+  id: '/communications',
+  path: '/communications',
+  getParentRoute: () => InternalRoute,
+} as any)
 const InternalDashboardRoute = InternalDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
   getParentRoute: () => InternalRoute,
 } as any)
+const InternalTodayRoute = InternalTodayRouteImport.update({
+  id: '/today',
+  path: '/today',
+  getParentRoute: () => InternalRoute,
+} as any)
+const ClientIndexRoute = ClientIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ClientRoute,
+} as any)
+const ClientCasesRoute = ClientCasesRouteImport.update({
+  id: '/cases',
+  path: '/cases',
+  getParentRoute: () => ClientRoute,
+} as any)
+const ClientConfirmationsRoute = ClientConfirmationsRouteImport.update({
+  id: '/confirmations',
+  path: '/confirmations',
+  getParentRoute: () => ClientRoute,
+} as any)
+const ClientStatementsRoute = ClientStatementsRouteImport.update({
+  id: '/statements',
+  path: '/statements',
+  getParentRoute: () => ClientRoute,
+} as any)
+const ClientUploadRoute = ClientUploadRouteImport.update({
+  id: '/upload',
+  path: '/upload',
+  getParentRoute: () => ClientRoute,
+} as any)
+const InternalClientsIndexRoute = InternalClientsIndexRouteImport.update({
+  id: '/clients/',
+  path: '/clients/',
+  getParentRoute: () => InternalRoute,
+} as any)
+const InternalClientsNewRoute = InternalClientsNewRouteImport.update({
+  id: '/clients/new',
+  path: '/clients/new',
+  getParentRoute: () => InternalRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/client': typeof ClientRoute
+  '/client': typeof ClientRouteWithChildren
   '/sign-in': typeof SignInRoute
+  '/audit': typeof InternalAuditRoute
+  '/cases': typeof InternalCasesRoute
+  '/communications': typeof InternalCommunicationsRoute
   '/dashboard': typeof InternalDashboardRoute
+  '/today': typeof InternalTodayRoute
+  '/client/cases': typeof ClientCasesRoute
+  '/client/confirmations': typeof ClientConfirmationsRoute
+  '/client/statements': typeof ClientStatementsRoute
+  '/client/upload': typeof ClientUploadRoute
+  '/client/': typeof ClientIndexRoute
+  '/clients/new': typeof InternalClientsNewRoute
+  '/clients/': typeof InternalClientsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/client': typeof ClientRoute
   '/sign-in': typeof SignInRoute
+  '/audit': typeof InternalAuditRoute
+  '/cases': typeof InternalCasesRoute
+  '/communications': typeof InternalCommunicationsRoute
   '/dashboard': typeof InternalDashboardRoute
+  '/today': typeof InternalTodayRoute
+  '/client/cases': typeof ClientCasesRoute
+  '/client/confirmations': typeof ClientConfirmationsRoute
+  '/client/statements': typeof ClientStatementsRoute
+  '/client/upload': typeof ClientUploadRoute
+  '/client': typeof ClientIndexRoute
+  '/clients/new': typeof InternalClientsNewRoute
+  '/clients': typeof InternalClientsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_internal': typeof InternalRouteWithChildren
-  '/client': typeof ClientRoute
+  '/client': typeof ClientRouteWithChildren
   '/sign-in': typeof SignInRoute
+  '/_internal/audit': typeof InternalAuditRoute
+  '/_internal/cases': typeof InternalCasesRoute
+  '/_internal/communications': typeof InternalCommunicationsRoute
   '/_internal/dashboard': typeof InternalDashboardRoute
+  '/_internal/today': typeof InternalTodayRoute
+  '/client/cases': typeof ClientCasesRoute
+  '/client/confirmations': typeof ClientConfirmationsRoute
+  '/client/statements': typeof ClientStatementsRoute
+  '/client/upload': typeof ClientUploadRoute
+  '/client/': typeof ClientIndexRoute
+  '/_internal/clients/new': typeof InternalClientsNewRoute
+  '/_internal/clients/': typeof InternalClientsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/client' | '/sign-in' | '/dashboard'
+  fullPaths:
+    | '/'
+    | '/client'
+    | '/sign-in'
+    | '/audit'
+    | '/cases'
+    | '/communications'
+    | '/dashboard'
+    | '/today'
+    | '/client/cases'
+    | '/client/confirmations'
+    | '/client/statements'
+    | '/client/upload'
+    | '/client/'
+    | '/clients/new'
+    | '/clients/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/client' | '/sign-in' | '/dashboard'
+  to:
+    | '/'
+    | '/sign-in'
+    | '/audit'
+    | '/cases'
+    | '/communications'
+    | '/dashboard'
+    | '/today'
+    | '/client/cases'
+    | '/client/confirmations'
+    | '/client/statements'
+    | '/client/upload'
+    | '/client'
+    | '/clients/new'
+    | '/clients'
   id:
     | '__root__'
     | '/'
     | '/_internal'
     | '/client'
     | '/sign-in'
+    | '/_internal/audit'
+    | '/_internal/cases'
+    | '/_internal/communications'
     | '/_internal/dashboard'
+    | '/_internal/today'
+    | '/client/cases'
+    | '/client/confirmations'
+    | '/client/statements'
+    | '/client/upload'
+    | '/client/'
+    | '/_internal/clients/new'
+    | '/_internal/clients/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   InternalRoute: typeof InternalRouteWithChildren
-  ClientRoute: typeof ClientRoute
+  ClientRoute: typeof ClientRouteWithChildren
   SignInRoute: typeof SignInRoute
 }
 
@@ -111,6 +249,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignInRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_internal/audit': {
+      id: '/_internal/audit'
+      path: '/audit'
+      fullPath: '/audit'
+      preLoaderRoute: typeof InternalAuditRouteImport
+      parentRoute: typeof InternalRoute
+    }
+    '/_internal/cases': {
+      id: '/_internal/cases'
+      path: '/cases'
+      fullPath: '/cases'
+      preLoaderRoute: typeof InternalCasesRouteImport
+      parentRoute: typeof InternalRoute
+    }
+    '/_internal/communications': {
+      id: '/_internal/communications'
+      path: '/communications'
+      fullPath: '/communications'
+      preLoaderRoute: typeof InternalCommunicationsRouteImport
+      parentRoute: typeof InternalRoute
+    }
     '/_internal/dashboard': {
       id: '/_internal/dashboard'
       path: '/dashboard'
@@ -118,25 +277,112 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InternalDashboardRouteImport
       parentRoute: typeof InternalRoute
     }
+    '/_internal/today': {
+      id: '/_internal/today'
+      path: '/today'
+      fullPath: '/today'
+      preLoaderRoute: typeof InternalTodayRouteImport
+      parentRoute: typeof InternalRoute
+    }
+    '/client/': {
+      id: '/client/'
+      path: '/'
+      fullPath: '/client/'
+      preLoaderRoute: typeof ClientIndexRouteImport
+      parentRoute: typeof ClientRoute
+    }
+    '/client/cases': {
+      id: '/client/cases'
+      path: '/cases'
+      fullPath: '/client/cases'
+      preLoaderRoute: typeof ClientCasesRouteImport
+      parentRoute: typeof ClientRoute
+    }
+    '/client/confirmations': {
+      id: '/client/confirmations'
+      path: '/confirmations'
+      fullPath: '/client/confirmations'
+      preLoaderRoute: typeof ClientConfirmationsRouteImport
+      parentRoute: typeof ClientRoute
+    }
+    '/client/statements': {
+      id: '/client/statements'
+      path: '/statements'
+      fullPath: '/client/statements'
+      preLoaderRoute: typeof ClientStatementsRouteImport
+      parentRoute: typeof ClientRoute
+    }
+    '/client/upload': {
+      id: '/client/upload'
+      path: '/upload'
+      fullPath: '/client/upload'
+      preLoaderRoute: typeof ClientUploadRouteImport
+      parentRoute: typeof ClientRoute
+    }
+    '/_internal/clients/': {
+      id: '/_internal/clients/'
+      path: '/clients'
+      fullPath: '/clients/'
+      preLoaderRoute: typeof InternalClientsIndexRouteImport
+      parentRoute: typeof InternalRoute
+    }
+    '/_internal/clients/new': {
+      id: '/_internal/clients/new'
+      path: '/clients/new'
+      fullPath: '/clients/new'
+      preLoaderRoute: typeof InternalClientsNewRouteImport
+      parentRoute: typeof InternalRoute
+    }
   }
 }
 
 interface InternalRouteChildren {
+  InternalAuditRoute: typeof InternalAuditRoute
+  InternalCasesRoute: typeof InternalCasesRoute
+  InternalCommunicationsRoute: typeof InternalCommunicationsRoute
   InternalDashboardRoute: typeof InternalDashboardRoute
+  InternalTodayRoute: typeof InternalTodayRoute
+  InternalClientsNewRoute: typeof InternalClientsNewRoute
+  InternalClientsIndexRoute: typeof InternalClientsIndexRoute
 }
 
 const InternalRouteChildren: InternalRouteChildren = {
+  InternalAuditRoute: InternalAuditRoute,
+  InternalCasesRoute: InternalCasesRoute,
+  InternalCommunicationsRoute: InternalCommunicationsRoute,
   InternalDashboardRoute: InternalDashboardRoute,
+  InternalTodayRoute: InternalTodayRoute,
+  InternalClientsNewRoute: InternalClientsNewRoute,
+  InternalClientsIndexRoute: InternalClientsIndexRoute,
 }
 
 const InternalRouteWithChildren = InternalRoute._addFileChildren(
   InternalRouteChildren,
 )
 
+interface ClientRouteChildren {
+  ClientCasesRoute: typeof ClientCasesRoute
+  ClientConfirmationsRoute: typeof ClientConfirmationsRoute
+  ClientStatementsRoute: typeof ClientStatementsRoute
+  ClientUploadRoute: typeof ClientUploadRoute
+  ClientIndexRoute: typeof ClientIndexRoute
+}
+
+const ClientRouteChildren: ClientRouteChildren = {
+  ClientCasesRoute: ClientCasesRoute,
+  ClientConfirmationsRoute: ClientConfirmationsRoute,
+  ClientStatementsRoute: ClientStatementsRoute,
+  ClientUploadRoute: ClientUploadRoute,
+  ClientIndexRoute: ClientIndexRoute,
+}
+
+const ClientRouteWithChildren =
+  ClientRoute._addFileChildren(ClientRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   InternalRoute: InternalRouteWithChildren,
-  ClientRoute: ClientRoute,
+  ClientRoute: ClientRouteWithChildren,
   SignInRoute: SignInRoute,
 }
 export const routeTree = rootRouteImport

@@ -1,26 +1,16 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { createServerFn } from "@tanstack/react-start";
-
-// Minimal end-to-end proof: a server function actually running server-side
-// (not just static client rendering), returning something only computable
-// on the server (process.versions.node is undefined in the browser).
-const getServerInfo = createServerFn({ method: "GET" }).handler(async () => ({
-  runtime: typeof process !== "undefined" && process.versions?.node ? `node ${process.versions.node}` : "non-node runtime",
-  now: new Date().toISOString(),
-}));
+/**
+ * TanStack Start adapter for src/app/page.tsx -- the role-aware landing
+ * redirect (M1 Batch 1). Supersedes the M0 boot-test placeholder (accepted
+ * as PASS; no longer needed once real routes exist to prove the toolchain
+ * against). Redirect decided server-side in beforeLoad so it happens before
+ * any render, same as every other guard on this branch.
+ */
+import { createFileRoute, redirect } from "@tanstack/react-router";
+import { getLandingRedirect } from "@/lib/root-landing.functions";
 
 export const Route = createFileRoute("/")({
-  component: Home,
-  loader: () => getServerInfo(),
+  beforeLoad: async () => {
+    const { to } = await getLandingRedirect();
+    throw redirect({ to });
+  },
 });
-
-function Home() {
-  const info = Route.useLoaderData();
-  return (
-    <main style={{ fontFamily: "system-ui", padding: 32 }}>
-      <h1>TanStack Start toolchain: booted</h1>
-      <p>Server function executed on: {info.runtime}</p>
-      <p>Server timestamp: {info.now}</p>
-    </main>
-  );
-}
