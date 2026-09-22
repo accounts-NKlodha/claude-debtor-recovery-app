@@ -16,6 +16,7 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as InternalAuditRouteImport } from './routes/_internal/audit'
 import { Route as InternalCommunicationsRouteImport } from './routes/_internal/communications'
 import { Route as InternalDashboardRouteImport } from './routes/_internal/dashboard'
+import { Route as InternalIntakeRouteImport } from './routes/_internal/intake'
 import { Route as InternalTodayRouteImport } from './routes/_internal/today'
 import { Route as ClientIndexRouteImport } from './routes/client/index'
 import { Route as ClientCasesRouteImport } from './routes/client/cases'
@@ -59,6 +60,11 @@ const InternalCommunicationsRoute = InternalCommunicationsRouteImport.update({
 const InternalDashboardRoute = InternalDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => InternalRoute,
+} as any)
+const InternalIntakeRoute = InternalIntakeRouteImport.update({
+  id: '/intake',
+  path: '/intake',
   getParentRoute: () => InternalRoute,
 } as any)
 const InternalTodayRoute = InternalTodayRouteImport.update({
@@ -119,6 +125,7 @@ export interface FileRoutesByFullPath {
   '/audit': typeof InternalAuditRoute
   '/communications': typeof InternalCommunicationsRoute
   '/dashboard': typeof InternalDashboardRoute
+  '/intake': typeof InternalIntakeRoute
   '/today': typeof InternalTodayRoute
   '/client/cases': typeof ClientCasesRoute
   '/client/confirmations': typeof ClientConfirmationsRoute
@@ -136,6 +143,7 @@ export interface FileRoutesByTo {
   '/audit': typeof InternalAuditRoute
   '/communications': typeof InternalCommunicationsRoute
   '/dashboard': typeof InternalDashboardRoute
+  '/intake': typeof InternalIntakeRoute
   '/today': typeof InternalTodayRoute
   '/client/cases': typeof ClientCasesRoute
   '/client/confirmations': typeof ClientConfirmationsRoute
@@ -156,6 +164,7 @@ export interface FileRoutesById {
   '/_internal/audit': typeof InternalAuditRoute
   '/_internal/communications': typeof InternalCommunicationsRoute
   '/_internal/dashboard': typeof InternalDashboardRoute
+  '/_internal/intake': typeof InternalIntakeRoute
   '/_internal/today': typeof InternalTodayRoute
   '/client/cases': typeof ClientCasesRoute
   '/client/confirmations': typeof ClientConfirmationsRoute
@@ -176,6 +185,7 @@ export interface FileRouteTypes {
     | '/audit'
     | '/communications'
     | '/dashboard'
+    | '/intake'
     | '/today'
     | '/client/cases'
     | '/client/confirmations'
@@ -193,6 +203,7 @@ export interface FileRouteTypes {
     | '/audit'
     | '/communications'
     | '/dashboard'
+    | '/intake'
     | '/today'
     | '/client/cases'
     | '/client/confirmations'
@@ -212,6 +223,7 @@ export interface FileRouteTypes {
     | '/_internal/audit'
     | '/_internal/communications'
     | '/_internal/dashboard'
+    | '/_internal/intake'
     | '/_internal/today'
     | '/client/cases'
     | '/client/confirmations'
@@ -280,6 +292,13 @@ declare module '@tanstack/react-router' {
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof InternalDashboardRouteImport
+      parentRoute: typeof InternalRoute
+    }
+    '/_internal/intake': {
+      id: '/_internal/intake'
+      path: '/intake'
+      fullPath: '/intake'
+      preLoaderRoute: typeof InternalIntakeRouteImport
       parentRoute: typeof InternalRoute
     }
     '/_internal/today': {
@@ -359,6 +378,7 @@ interface InternalRouteChildren {
   InternalAuditRoute: typeof InternalAuditRoute
   InternalCommunicationsRoute: typeof InternalCommunicationsRoute
   InternalDashboardRoute: typeof InternalDashboardRoute
+  InternalIntakeRoute: typeof InternalIntakeRoute
   InternalTodayRoute: typeof InternalTodayRoute
   InternalCasesIdRoute: typeof InternalCasesIdRoute
   InternalClientsNewRoute: typeof InternalClientsNewRoute
@@ -370,6 +390,7 @@ const InternalRouteChildren: InternalRouteChildren = {
   InternalAuditRoute: InternalAuditRoute,
   InternalCommunicationsRoute: InternalCommunicationsRoute,
   InternalDashboardRoute: InternalDashboardRoute,
+  InternalIntakeRoute: InternalIntakeRoute,
   InternalTodayRoute: InternalTodayRoute,
   InternalCasesIdRoute: InternalCasesIdRoute,
   InternalClientsNewRoute: InternalClientsNewRoute,
