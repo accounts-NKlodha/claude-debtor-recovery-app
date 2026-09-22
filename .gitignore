@@ -66,3 +66,8 @@ next-env.d.ts
 # Database backups (disaster-recovery task) -- logical dumps of production
 # data, never committed. See docs/disaster-recovery/index.md.
 /backups/
+
+# TanStack Start / Vite / Nitro build output (tanstack:build) -- regenerable,
+# not the Next.js build (that's already covered by /.next/ below).
+/.output/
+/.wrangler/

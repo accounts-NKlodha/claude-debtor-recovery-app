@@ -10,33 +10,75 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as InternalRouteImport } from './routes/_internal'
+import { Route as ClientRouteImport } from './routes/client'
+import { Route as SignInRouteImport } from './routes/sign-in'
+import { Route as InternalDashboardRouteImport } from './routes/_internal/dashboard'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InternalRoute = InternalRouteImport.update({
+  id: '/_internal',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ClientRoute = ClientRouteImport.update({
+  id: '/client',
+  path: '/client',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignInRoute = SignInRouteImport.update({
+  id: '/sign-in',
+  path: '/sign-in',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InternalDashboardRoute = InternalDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => InternalRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/client': typeof ClientRoute
+  '/sign-in': typeof SignInRoute
+  '/dashboard': typeof InternalDashboardRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/client': typeof ClientRoute
+  '/sign-in': typeof SignInRoute
+  '/dashboard': typeof InternalDashboardRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/_internal': typeof InternalRouteWithChildren
+  '/client': typeof ClientRoute
+  '/sign-in': typeof SignInRoute
+  '/_internal/dashboard': typeof InternalDashboardRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/client' | '/sign-in' | '/dashboard'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/client' | '/sign-in' | '/dashboard'
+  id:
+    | '__root__'
+    | '/'
+    | '/_internal'
+    | '/client'
+    | '/sign-in'
+    | '/_internal/dashboard'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  InternalRoute: typeof InternalRouteWithChildren
+  ClientRoute: typeof ClientRoute
+  SignInRoute: typeof SignInRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +90,54 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_internal': {
+      id: '/_internal'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof InternalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/client': {
+      id: '/client'
+      path: '/client'
+      fullPath: '/client'
+      preLoaderRoute: typeof ClientRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-in': {
+      id: '/sign-in'
+      path: '/sign-in'
+      fullPath: '/sign-in'
+      preLoaderRoute: typeof SignInRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_internal/dashboard': {
+      id: '/_internal/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof InternalDashboardRouteImport
+      parentRoute: typeof InternalRoute
+    }
   }
 }
 
+interface InternalRouteChildren {
+  InternalDashboardRoute: typeof InternalDashboardRoute
+}
+
+const InternalRouteChildren: InternalRouteChildren = {
+  InternalDashboardRoute: InternalDashboardRoute,
+}
+
+const InternalRouteWithChildren = InternalRoute._addFileChildren(
+  InternalRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  InternalRoute: InternalRouteWithChildren,
+  ClientRoute: ClientRoute,
+  SignInRoute: SignInRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

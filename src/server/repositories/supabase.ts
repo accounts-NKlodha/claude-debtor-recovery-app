@@ -18,7 +18,6 @@
  * repository seam.
  */
 
-import { createClient } from "@/lib/supabase/server";
 import { estimateSuccessFee } from "@/domain/fees";
 import { applyConfirmedPayment } from "@/domain/apply-payment";
 import {
@@ -119,7 +118,10 @@ import type {
   TrendPoint,
 } from "../repository";
 
-type Client = Awaited<ReturnType<typeof createClient>>;
+// Type-only import: erased at build time (no runtime module -- see the
+// dynamic `defaultNextClientFactory` below for why this file never
+// statically imports @/lib/supabase/server's runtime value).
+type Client = Awaited<ReturnType<typeof import("@/lib/supabase/server").createClient>>;
 
 function toOrganisation(row: Database["public"]["Tables"]["organisations"]["Row"]): Organisation {
   return {
@@ -385,11 +387,33 @@ async function recordAudit(
   if (res.error) throw new Error(`SupabaseRepository.recordAudit(${action}): ${res.error.message}`);
 }
 
+/** Dynamic import so `@/lib/supabase/server` (next/headers + server-only)
+ * is never a static dependency of this module -- see the constructor's
+ * doc comment. */
+async function defaultNextClientFactory(): Promise<Client> {
+  const { createClient } = await import("@/lib/supabase/server");
+  return createClient();
+}
+
 export class SupabaseRepository implements Repository {
   private clientPromise: Promise<Client>;
 
-  constructor() {
-    this.clientPromise = createClient();
+  /**
+   * `clientFactory` defaults to the Next.js cookie-based client, imported
+   * dynamically (not as a static top-of-file import) so that
+   * `@/lib/supabase/server` -- which pulls in `next/headers` and
+   * `"server-only"` -- is never eagerly part of this module's dependency
+   * graph. That matters for the TanStack Start port (port/tanstack-start
+   * branch): it always passes its own cookie-based client factory here, so
+   * this entire repository (every method below) is reused verbatim rather
+   * than reimplemented, but a *static* Next import here would still get
+   * pulled into TanStack's route/client bundling analysis and trip
+   * "server-only"'s client-bundle guard even though that branch is never
+   * actually reached. Existing Next.js call sites (`new SupabaseRepository()`,
+   * no args) are unaffected -- same client, just resolved dynamically.
+   */
+  constructor(clientFactory: () => Promise<Client> = defaultNextClientFactory) {
+    this.clientPromise = clientFactory();
   }
 
   private async db() {
