@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // TanStack Start / Vite / Nitro build output (tanstack:build) -- bundled
+    // third-party code (Supabase, Zod, react-router, Nitro's own runtime),
+    // not this project's source; matches the /.output/ /.wrangler/ entries
+    // in .gitignore.
+    ".output/**",
+    ".wrangler/**",
   ]),
 ]);
 
