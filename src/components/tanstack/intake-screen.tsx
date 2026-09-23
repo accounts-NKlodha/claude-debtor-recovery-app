@@ -1,8 +1,8 @@
 /**
  * TanStack Start adapter for src/components/screens/intake-screen.tsx --
- * identical UX/copy/business logic. ReminderComposer is reused verbatim
- * (it has zero Next.js dependency -- purely local state + schema
- * validation, no server call at all). ManualInvoiceForm and BulkImport/
+ * same business logic; presentation and some operator-facing copy differ.
+ * ReminderComposer has zero Next.js dependency -- purely local state +
+ * schema validation, no server call at all. ManualInvoiceForm and BulkImport/
  * CommitPanel: useActionState/<form action> -> local state calling
  * manual-invoice.functions.ts / bulk-import.functions.ts directly.
  * ManualInvoiceForm stays uncontrolled (matching the original exactly) --
@@ -13,8 +13,11 @@
 "use client";
 
 import * as React from "react";
-import { Upload, FileSpreadsheet, CircleCheck, CircleAlert } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { Upload, FileSpreadsheet, CircleCheck, CircleAlert, Check } from "lucide-react";
 import { reminderComposeSchema } from "@/contract/schemas";
+import { CASE_STATUS, type CaseStatus } from "@/contract/enums";
+import { caseStatusLabel } from "@/components/ui/status-pill";
 import type { ImportResult, Organisation } from "@/contract/types";
 import {
   commitBulkImportFn,
@@ -23,7 +26,7 @@ import {
   type ValidateBulkImportState,
 } from "@/lib/bulk-import.functions";
 import { createCaseFromManualInvoiceFn, type CreateManualInvoiceState } from "@/lib/manual-invoice.functions";
-import { formatInr } from "@/lib/utils";
+import { cn, formatInr } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -71,7 +74,7 @@ function ReminderComposer() {
   const [body, setBody] = React.useState(
     "Namaste, this is N K Lodha & Co regarding invoice {{invoice_number}} for {{amount}}, overdue since {{due_date}}. Kindly arrange payment or reply here.",
   );
-  const [result, setResult] = React.useState<string | null>(null);
+  const [result, setResult] = React.useState<{ ok: boolean; message: string } | null>(null);
 
   const toggle = (c: string) =>
     setChannels((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
@@ -86,32 +89,45 @@ function ReminderComposer() {
     });
     setResult(
       parsed.success
-        ? "Queued for the next permitted 11:00 AM IST window (not Sunday)."
-        : parsed.error.issues[0]?.message ?? "Invalid",
+        ? { ok: true, message: "Queued for the next permitted 11:00 AM IST window (not Sunday)." }
+        : {
+            ok: false,
+            // The schema's own min-length message is developer-facing.
+            message:
+              channels.length === 0
+                ? "Select at least one channel."
+                : (parsed.error.issues[0]?.message ?? "Check the reminder and try again."),
+          },
     );
   };
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <Label>Channels</Label>
-        <div className="flex gap-2">
-          {["whatsapp", "email", "postal"].map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => toggle(c)}
-              aria-pressed={channels.includes(c)}
-              className={
-                "rounded-md border px-3 py-1.5 text-xs font-medium capitalize " +
-                (channels.includes(c)
-                  ? "border-transparent bg-accent text-accent-foreground"
-                  : "border-border text-muted-foreground")
-              }
-            >
-              {c}
-            </button>
-          ))}
+      <div className="flex flex-col gap-1.5">
+        <span id="reminder-channels-label" className="text-xs font-medium text-foreground">
+          Channels
+        </span>
+        <div className="flex flex-wrap gap-2" role="group" aria-labelledby="reminder-channels-label">
+          {["whatsapp", "email", "postal"].map((c) => {
+            const on = channels.includes(c);
+            return (
+              <button
+                key={c}
+                type="button"
+                onClick={() => toggle(c)}
+                aria-pressed={on}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium capitalize transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+                  on
+                    ? "border-primary/40 bg-accent text-accent-foreground"
+                    : "border-border bg-card text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {on ? <Check aria-hidden="true" className="h-3 w-3" /> : null}
+                {c}
+              </button>
+            );
+          })}
         </div>
       </div>
       <Field id="reminder-body" label="Message body">
@@ -125,7 +141,16 @@ function ReminderComposer() {
       <div className="flex items-center gap-3">
         <Button type="submit">Schedule reminder</Button>
         {result ? (
-          <span className="text-xs text-muted-foreground">{result}</span>
+          <span
+            role={result.ok ? "status" : "alert"}
+            className={cn(
+              "inline-flex items-center gap-1.5 text-xs",
+              result.ok ? "text-success" : "text-danger",
+            )}
+          >
+            {result.ok ? <CircleCheck className="h-3.5 w-3.5" /> : <CircleAlert className="h-3.5 w-3.5" />}
+            {result.message}
+          </span>
         ) : null}
       </div>
     </form>
@@ -133,6 +158,12 @@ function ReminderComposer() {
 }
 
 /* --------------------------------------------------- manual invoice ---- */
+
+function statusText(status: string) {
+  return (CASE_STATUS as readonly string[]).includes(status)
+    ? caseStatusLabel(status as CaseStatus).toLowerCase()
+    : status.replace(/_/g, " ");
+}
 
 const CREATE_MANUAL_INVOICE_IDLE: CreateManualInvoiceState = { result: null, error: null };
 
@@ -205,9 +236,16 @@ function ManualInvoiceForm({ organisationId }: { organisationId: string }) {
           {pending ? "Creating…" : "Add invoice to draft case"}
         </Button>
         {state.result ? (
-          <span className="inline-flex items-center gap-1 text-xs text-success">
-            <CircleCheck className="h-3.5 w-3.5" /> Draft case {state.result.caseId} created — status &quot;
-            {state.result.status}&quot;, not yet activated
+          <span className="inline-flex flex-wrap items-center gap-1 text-xs text-success" role="status">
+            <CircleCheck className="h-3.5 w-3.5" /> Draft case{" "}
+            <Link
+              to="/cases/$id"
+              params={{ id: state.result.caseId }}
+              className="font-mono font-medium underline underline-offset-2 hover:text-foreground"
+            >
+              {state.result.caseId}
+            </Link>{" "}
+            created — {statusText(state.result.status)}, not yet activated
           </span>
         ) : null}
         {state.error ? (
@@ -458,15 +496,15 @@ export function IntakeScreen({ organisations }: { organisations: Organisation[] 
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 shadow-xs">
         <Label htmlFor="intake-org" className="text-xs text-muted-foreground">
-          Client
+          Intake for client
         </Label>
         <select
           id="intake-org"
           value={organisationId}
           onChange={(e) => setOrganisationId(e.target.value)}
-          className="h-8 rounded-md border border-input bg-card px-2 text-sm"
+          className="h-9 min-w-56 rounded-md border border-input bg-card px-2 text-sm font-medium text-foreground shadow-xs"
         >
           {organisations.map((o) => (
             <option key={o.id} value={o.id}>
@@ -501,7 +539,10 @@ export function IntakeScreen({ organisations }: { organisations: Organisation[] 
           <Card>
             <CardHeader>
               <CardTitle>Manual invoice entry</CardTitle>
-              <CardDescription>Validated with the shared manualInvoiceSchema.</CardDescription>
+              <CardDescription>
+                Creates a draft case. It is never activated until certification, staff validation and the age gate
+                all apply.
+              </CardDescription>
             </CardHeader>
             <CardContent className="pt-0">
               <ManualInvoiceForm organisationId={organisationId} />

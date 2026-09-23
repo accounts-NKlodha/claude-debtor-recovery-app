@@ -1,14 +1,8 @@
 /**
  * TanStack Start adapter for src/components/screens/cases-table.tsx --
- * identical markup/behavior/sorting/filtering, only `next/navigation`'s
- * useRouter().push swapped for TanStack Router's useNavigate(). Only exists
- * on the TanStack port branch; the Next.js original is untouched.
- *
- * Row click still targets /cases/$id, which is not yet ported (out of scope
- * for M1 Batch 1 -- case detail touches WhatsApp/payment-promise/hearing
- * actions on the "do not touch yet" list). Same known, already-accepted
- * limitation as the M0-R1 dashboard's "Open case" button pointing at the
- * same not-yet-ported route.
+ * same columns, sorting and filtering; `next/navigation`'s useRouter().push
+ * swapped for TanStack Router's useNavigate(). Presentation differs from
+ * the Next.js original (responsive column visibility, sort indicators).
  */
 "use client";
 
@@ -22,11 +16,11 @@ import {
   getSortedRowModel,
   getFilteredRowModel,
 } from "@tanstack/react-table/legacy";
-import { ArrowUpDown, Search } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Search } from "lucide-react";
 import type { CaseRow } from "@/lib/mock-data";
 import type { CaseStatus, WaitingOn } from "@/contract/enums";
 import { CASE_STATUS } from "@/contract/enums";
-import { formatInr } from "@/lib/utils";
+import { cn, formatInr } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -52,12 +46,32 @@ type QuickFilter = "all" | "urgent" | "blocked" | "client" | "portal";
 
 const col = legacyCreateColumnHelper<CaseRow>();
 
+// Per-column cell/header classes. GSTIN, assignee and waiting-on keep their
+// own columns (sorting/global filter use them) but only show on very wide
+// screens; narrower, each is folded into a neighbouring cell instead.
+const COL_CLASS: Record<string, string> = {
+  gstin: "hidden 2xl:table-cell",
+  value: "text-right",
+  assignee: "hidden 2xl:table-cell",
+  waitingOn: "hidden 2xl:table-cell",
+};
+
 const columns = [
   col.accessor("client", {
     header: "Client",
-    cell: (c) => <span className="font-medium">{c.getValue<string>()}</span>,
+    cell: (c) => <span className="block min-w-32 max-w-48 font-medium leading-snug">{c.getValue<string>()}</span>,
   }),
-  col.accessor("debtor", { header: "Debtor" }),
+  col.accessor("debtor", {
+    header: "Debtor",
+    cell: (c) => (
+      <span className="block min-w-32 max-w-48 leading-snug">
+        {c.getValue<string>()}
+        <span className="block font-mono text-[11px] text-muted-foreground 2xl:hidden">
+          {c.row.original.gstin ?? "No GSTIN"}
+        </span>
+      </span>
+    ),
+  }),
   col.accessor("gstin", {
     header: "GSTIN",
     cell: (c) => (
@@ -69,12 +83,22 @@ const columns = [
   }),
   col.accessor("status", {
     header: "Status",
-    cell: (c) => <StatusPill status={c.getValue<CaseStatus>()} />,
+    cell: (c) => (
+      <span className="flex flex-col items-start gap-1">
+        <StatusPill status={c.getValue<CaseStatus>()} />
+        <WaitingOnPill value={c.row.original.waitingOn} className="2xl:hidden" />
+      </span>
+    ),
   }),
   col.accessor("nextAction", {
     header: "Next action",
     cell: (c) => (
-      <span className="text-xs text-muted-foreground">{c.getValue<string | null>() ?? "—"}</span>
+      <span className="block min-w-36 max-w-56">
+        <span className="line-clamp-2 text-xs text-foreground/80" title={c.getValue<string | null>() ?? undefined}>
+          {c.getValue<string | null>() ?? "—"}
+        </span>
+        <span className="mt-0.5 block text-[11px] text-muted-foreground 2xl:hidden">{c.row.original.assignee}</span>
+      </span>
     ),
     enableSorting: false,
   }),
@@ -85,15 +109,18 @@ const columns = [
       return d > 0 ? (
         <Badge tone={d > 60 ? "danger" : "warning"}>{d}d</Badge>
       ) : (
-        <span className="text-xs text-muted-foreground">On time</span>
+        <span className="whitespace-nowrap text-xs text-muted-foreground">On time</span>
       );
     },
   }),
   col.accessor("value", {
     header: "Value",
-    cell: (c) => <span className="tabular-nums">{formatInr(c.getValue<number>())}</span>,
+    cell: (c) => <span className="whitespace-nowrap font-medium tabular-nums">{formatInr(c.getValue<number>())}</span>,
   }),
-  col.accessor("assignee", { header: "Assignee" }),
+  col.accessor("assignee", {
+    header: "Assignee",
+    cell: (c) => <span className="whitespace-nowrap text-sm">{c.getValue<string>()}</span>,
+  }),
   col.accessor("waitingOn", {
     header: "Waiting on",
     cell: (c) => <WaitingOnPill value={c.getValue<WaitingOn>()} />,
@@ -175,7 +202,7 @@ export function CasesTable({ rows }: { rows: CaseRow[] }) {
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as "" | CaseStatus)}
           aria-label="Filter by status"
-          className="h-9 rounded-md border border-input bg-card px-2 text-sm"
+          className="h-9 rounded-md border border-input bg-card px-2 text-sm text-foreground shadow-xs"
         >
           <option value="">All statuses</option>
           {CASE_STATUS.map((s) => (
@@ -192,23 +219,32 @@ export function CasesTable({ rows }: { rows: CaseRow[] }) {
       {bodyRows.length === 0 ? (
         <EmptyState title="No cases match these filters" description="Clear the search or status filter to see all cases." />
       ) : (
-        <div className="rounded-lg border border-border bg-card">
+        <div className="overflow-hidden rounded-lg border border-border bg-card shadow-xs">
           <Table>
             <TableHeader>
               {table.getHeaderGroups().map((hg) => (
                 <TableRow key={hg.id}>
                   {hg.headers.map((h) => {
                     const canSort = h.column.getCanSort();
+                    const sorted = h.column.getIsSorted();
+                    const SortIcon = sorted === "asc" ? ArrowUp : sorted === "desc" ? ArrowDown : ArrowUpDown;
                     return (
-                      <TableHead key={h.id}>
+                      <TableHead
+                        key={h.id}
+                        className={COL_CLASS[h.column.id]}
+                        aria-sort={sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : canSort ? "none" : undefined}
+                      >
                         {canSort ? (
                           <button
                             type="button"
                             onClick={h.column.getToggleSortingHandler()}
-                            className="inline-flex items-center gap-1 font-medium hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded uppercase tracking-wider hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
+                              sorted && "text-foreground",
+                            )}
                           >
                             {flexRender(h.column.columnDef.header, h.getContext())}
-                            <ArrowUpDown className="h-3 w-3" />
+                            <SortIcon className={cn("h-3 w-3", !sorted && "opacity-50")} />
                           </button>
                         ) : (
                           flexRender(h.column.columnDef.header, h.getContext())
@@ -223,16 +259,17 @@ export function CasesTable({ rows }: { rows: CaseRow[] }) {
               {bodyRows.map((r) => (
                 <TableRow
                   key={r.id}
-                  className="cursor-pointer"
+                  className="cursor-pointer focus-visible:bg-muted/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                   tabIndex={0}
                   role="link"
+                  aria-label={`Open case for ${r.original.debtor} (${r.original.client})`}
                   onClick={() => navigate({ to: `/cases/${r.original.id}` })}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") navigate({ to: `/cases/${r.original.id}` });
                   }}
                 >
                   {r.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
+                    <TableCell key={cell.id} className={COL_CLASS[cell.column.id]}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>
                   ))}

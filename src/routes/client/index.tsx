@@ -1,6 +1,6 @@
 /**
- * TanStack Start adapter for src/app/(client)/client/page.tsx. Identical
- * JSX/Tailwind/data-assembly -- reuses PageHeader, Card, Badge,
+ * TanStack Start adapter for src/app/(client)/client/page.tsx. Same
+ * data-assembly (presentation differs slightly) -- reuses PageHeader, Card, Badge,
  * SpotlightCard, the chart components, CLIENT_SAFE_LABEL and
  * formatInr/formatInrCompact verbatim; only LinkButton is swapped for the
  * TanStack adapter. Authorization is enforced by the parent client layout
@@ -64,14 +64,14 @@ function ClientOverviewPage() {
         {tiles.map((t) => (
           <Card key={t.label}>
             <CardContent className="p-4">
-              <p className="text-2xl font-semibold tabular-nums">{t.value}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{t.label}</p>
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{t.label}</p>
+              <p className="mt-1.5 text-2xl font-semibold tracking-tight tabular-nums">{t.value}</p>
             </CardContent>
           </Card>
         ))}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Your cases</CardTitle>
@@ -81,13 +81,11 @@ function ClientOverviewPage() {
             {cases.map((c) => (
               <div
                 key={c.id}
-                className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+                className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5"
               >
                 <span className="text-sm">{c.groupKey ?? c.id}</span>
                 <div className="flex items-center gap-3">
-                  <span className="text-xs tabular-nums text-muted-foreground">
-                    {formatInr(c.principalOutstanding)}
-                  </span>
+                  <span className="text-sm font-medium tabular-nums">{formatInr(c.principalOutstanding)}</span>
                   <Badge tone="info">{CLIENT_SAFE_LABEL[c.status] ?? "In progress"}</Badge>
                 </div>
               </div>

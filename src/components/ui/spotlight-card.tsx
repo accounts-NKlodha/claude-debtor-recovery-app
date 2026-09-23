@@ -27,18 +27,25 @@ export function SpotlightCard({
   return (
     <Card
       className={cn(
-        tone === "primary" && "border-primary/30 bg-accent/40",
+        "relative overflow-hidden",
+        tone === "primary" && "border-primary/25 bg-[color-mix(in_srgb,var(--accent)_45%,var(--card))]",
         className,
       )}
     >
-      <CardContent className="flex flex-col gap-3 p-4">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+      {tone === "primary" ? <span aria-hidden="true" className="absolute inset-y-0 left-0 w-1 bg-primary" /> : null}
+      <CardContent className="flex flex-col gap-2 p-5 pl-6">
+        <p
+          className={cn(
+            "text-[11px] font-semibold uppercase tracking-wider",
+            tone === "primary" ? "text-primary" : "text-muted-foreground",
+          )}
+        >
           {eyebrow}
         </p>
-        <h3 className="text-base font-semibold tracking-tight">{title}</h3>
-        {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
+        <h3 className="text-base font-semibold tracking-tight text-foreground">{title}</h3>
+        {description ? <p className="text-sm leading-relaxed text-muted-foreground">{description}</p> : null}
         {action || secondaryAction ? (
-          <div className="mt-1 flex flex-wrap items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             {action}
             {secondaryAction}
           </div>

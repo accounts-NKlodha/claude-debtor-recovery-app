@@ -43,12 +43,12 @@ function Select({
   options: readonly string[];
 }) {
   return (
-    <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+    <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
       {label}
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-9 rounded-md border border-input bg-card px-2 text-sm text-foreground"
+        className="h-9 min-w-36 rounded-md border border-input bg-card px-2 text-sm font-normal capitalize text-foreground shadow-xs"
       >
         <option value="">All</option>
         {options.map((o) => (
@@ -137,9 +137,10 @@ export function CommsLog({
                   key={key}
                   type="button"
                   onClick={() => setOpenThread(key)}
+                  aria-current={isOpen ? "true" : undefined}
                   className={cn(
-                    "flex flex-col gap-1 rounded-lg border p-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-ring",
-                    isOpen ? "border-primary bg-accent" : "border-border bg-card hover:bg-muted",
+                    "flex flex-col gap-1 rounded-lg border p-3 text-left shadow-xs transition-colors focus-visible:outline-2 focus-visible:outline-ring",
+                    isOpen ? "border-primary/50 bg-accent" : "border-border bg-card hover:bg-muted/60",
                   )}
                 >
                   <div className="flex items-center gap-2">
@@ -152,6 +153,11 @@ export function CommsLog({
                     <span className="ml-auto text-[11px] text-muted-foreground">{msgs.length} msg</span>
                   </div>
                   <p className="line-clamp-1 text-xs text-muted-foreground">{last.body}</p>
+                  {msgs.some(isFailure) ? (
+                    <Badge tone="danger" className="self-start">
+                      Delivery failed
+                    </Badge>
+                  ) : null}
                   <span className="text-[11px] text-muted-foreground">{last.clientName}</span>
                 </button>
               );
@@ -159,7 +165,7 @@ export function CommsLog({
           )}
         </div>
 
-        <div className="rounded-lg border border-border bg-card p-4">
+        <div className="rounded-lg border border-border bg-card p-4 shadow-xs lg:sticky lg:top-20 lg:self-start">
           {!active || active.length === 0 ? (
             <EmptyState title="Select a thread" description="Choose a conversation on the left to read the full exchange." />
           ) : (
@@ -189,7 +195,8 @@ export function CommsLog({
                     ) : (
                       <ArrowDownLeft className="h-3 w-3" />
                     )}
-                    {m.channel} &middot; {m.deliveryStatus}
+                    {m.channel} &middot;{" "}
+                    <span className={cn(isFailure(m) && "font-medium text-danger")}>{m.deliveryStatus}</span>
                     {m.replyClassification ? (
                       <Badge tone="info" className="ml-1">
                         {m.replyClassification.replace(/_/g, " ")}

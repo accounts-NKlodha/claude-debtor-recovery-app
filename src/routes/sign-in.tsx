@@ -19,6 +19,7 @@ export const Route = createFileRoute("/sign-in")({
     error: typeof search.error === "string" ? search.error : undefined,
   }),
   component: SignInPage,
+  head: () => ({ meta: [{ title: "Sign in — Debtrecover" }] }),
 });
 
 function SignInPage() {
@@ -31,11 +32,22 @@ function SignInPage() {
         : null;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="w-full max-w-sm rounded-lg border border-border bg-card p-8 shadow-sm">
-        <h1 className="text-center text-lg font-semibold">Sign in to Debtrecover</h1>
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-background px-4 py-10">
+      <div className="flex flex-col items-center gap-2 text-center">
+        <span className="grid h-10 w-10 place-items-center rounded-lg bg-primary text-base font-bold text-primary-foreground shadow-sm">
+          D
+        </span>
+        <p className="text-xs font-medium text-muted-foreground">N K Lodha &amp; Co · Recovery desk</p>
+      </div>
+      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-8 shadow-sm">
+        <h1 className="text-center text-lg font-semibold tracking-tight">Sign in to Debtrecover</h1>
+        <p className="mt-1 text-center text-xs text-muted-foreground">Sign in with your email and password.</p>
         {message ? (
-          <p className="mt-2 text-center text-sm text-muted-foreground" role="alert">
+          <p
+            className="mt-4 flex items-start gap-2 rounded-md border border-warning/30 bg-warning-bg px-3 py-2 text-left text-xs text-warning"
+            role="alert"
+          >
+            <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             {message}
           </p>
         ) : null}

@@ -60,8 +60,8 @@ export function PaymentPromiseForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-2 rounded-md border border-border px-3 py-2">
-      <p className="text-sm font-medium">Record a promise to pay</p>
+    <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 shadow-xs">
+      <p className="text-sm font-semibold">Record a promise to pay</p>
       <div className="grid gap-2 sm:grid-cols-3">
         <div className="flex flex-col gap-1">
           <Label htmlFor="promise-date">Promised payment date</Label>

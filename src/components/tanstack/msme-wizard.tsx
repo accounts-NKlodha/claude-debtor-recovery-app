@@ -234,7 +234,7 @@ export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
                 onClick={() => !locked && i <= step && setStep(i)}
                 aria-current={state === "current" ? "step" : undefined}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium",
+                  "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
                   state === "current" && "border-primary bg-accent text-accent-foreground",
                   state === "done" && "border-transparent bg-success-bg text-success",
                   state === "todo" && "border-border text-muted-foreground",

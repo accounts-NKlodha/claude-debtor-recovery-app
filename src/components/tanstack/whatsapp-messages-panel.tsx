@@ -57,7 +57,7 @@ function OfferRow({ caseId, offer }: { caseId: string; offer: WhatsAppOfferView 
   const canSendHere = offer.status === "available" && offer.kind !== "initial_reminder" && offer.eventKey;
 
   return (
-    <li className="flex flex-col gap-1 rounded-md border border-border px-3 py-2">
+    <li className="flex flex-col gap-1 rounded-md border border-border bg-card px-3 py-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">{offer.label}</span>
@@ -144,19 +144,44 @@ function OfferRow({ caseId, offer }: { caseId: string; offer: WhatsAppOfferView 
  */
 export function WhatsAppMessagesPanel({ caseId, offers }: { caseId: string; offers: WhatsAppOfferView[] }) {
   if (offers.length === 0) return null;
+  // Rows needing attention (sendable, sent, ambiguous, or with a prior
+  // attempt) stay visible; plain "not available" rows are collapsed with
+  // their reasons intact so the actionable ones aren't buried.
+  const prominent = offers.filter((o) => o.status !== "unavailable" || o.ambiguous || o.history);
+  const quiet = offers.filter((o) => !prominent.includes(o));
+  const available = offers.filter((o) => o.status === "available").length;
+  const sent = offers.filter((o) => o.status === "sent").length;
+  const unavailable = offers.length - available - sent;
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <MessageCircle className="h-4 w-4" /> WhatsApp messages
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 pb-3">
+        <CardTitle className="flex items-center gap-2">
+          <MessageCircle className="h-4 w-4 text-muted-foreground" /> WhatsApp messages
         </CardTitle>
+        <span className="text-xs text-muted-foreground">
+          {available} available · {sent} sent · {unavailable} not available
+        </span>
       </CardHeader>
-      <CardContent className="pt-0">
-        <ul className="flex flex-col gap-2">
-          {offers.map((o) => (
-            <OfferRow key={o.eventKey ?? o.kind} caseId={caseId} offer={o} />
-          ))}
-        </ul>
+      <CardContent className="flex flex-col gap-2">
+        {prominent.length > 0 ? (
+          <ul className="flex flex-col gap-2">
+            {prominent.map((o) => (
+              <OfferRow key={o.eventKey ?? o.kind} caseId={caseId} offer={o} />
+            ))}
+          </ul>
+        ) : null}
+        {quiet.length > 0 ? (
+          <details className="group rounded-md border border-dashed border-border px-3 py-2 [&[open]]:pb-3">
+            <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground hover:text-foreground">
+              {quiet.length} message{quiet.length === 1 ? "" : "s"} not available at this stage — show why
+            </summary>
+            <ul className="mt-2 flex flex-col gap-2">
+              {quiet.map((o) => (
+                <OfferRow key={o.eventKey ?? o.kind} caseId={caseId} offer={o} />
+              ))}
+            </ul>
+          </details>
+        ) : null}
       </CardContent>
     </Card>
   );

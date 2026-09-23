@@ -5,11 +5,14 @@ import { cn } from "@/lib/utils";
 
 export function DropdownMenu({
   trigger,
+  triggerLabel,
   children,
   align = "end",
   className,
 }: {
   trigger: React.ReactNode;
+  /** Accessible name for icon/avatar-only triggers. */
+  triggerLabel?: string;
   children: React.ReactNode;
   align?: "start" | "end";
   className?: string;
@@ -37,8 +40,9 @@ export function DropdownMenu({
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={triggerLabel}
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex focus-visible:outline-2 focus-visible:outline-ring rounded-md"
+        className="inline-flex rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
         {trigger}
       </button>
@@ -46,7 +50,7 @@ export function DropdownMenu({
         <div
           role="menu"
           className={cn(
-            "absolute z-50 mt-1 min-w-44 rounded-md border border-border bg-card p-1 shadow-lg",
+            "absolute z-50 mt-1.5 min-w-48 rounded-lg border border-border bg-card p-1 shadow-lg",
             align === "end" ? "right-0" : "left-0",
             className,
           )}
@@ -67,7 +71,7 @@ export function DropdownMenuItem({
       type="button"
       role="menuitem"
       className={cn(
-        "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted focus-visible:bg-muted focus-visible:outline-none",
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-muted focus-visible:bg-muted focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}
       {...props}

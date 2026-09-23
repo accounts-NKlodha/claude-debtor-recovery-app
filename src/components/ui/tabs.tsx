@@ -6,8 +6,12 @@ import { cn } from "@/lib/utils";
 interface TabsCtx {
   value: string;
   setValue: (v: string) => void;
+  baseId: string;
 }
 const Ctx = React.createContext<TabsCtx | null>(null);
+
+const tabId = (base: string, v: string) => `${base}-tab-${v}`;
+const panelId = (base: string, v: string) => `${base}-panel-${v}`;
 
 export function Tabs({
   defaultValue,
@@ -23,6 +27,7 @@ export function Tabs({
   children: React.ReactNode;
 }) {
   const [uncontrolled, setUncontrolled] = React.useState(defaultValue ?? "");
+  const baseId = React.useId();
   const value = controlled ?? uncontrolled;
   const setValue = React.useCallback(
     (v: string) => {
@@ -32,18 +37,36 @@ export function Tabs({
     [onValueChange],
   );
   return (
-    <Ctx.Provider value={{ value, setValue }}>
+    <Ctx.Provider value={{ value, setValue, baseId }}>
       <div className={className}>{children}</div>
     </Ctx.Provider>
   );
 }
 
-export function TabsList({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+/** WAI-ARIA tabs keyboard model: arrows/Home/End move focus and select. */
+function onTabListKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+  const keys = ["ArrowRight", "ArrowLeft", "Home", "End"];
+  if (!keys.includes(e.key)) return;
+  const tabs = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]:not([disabled])'));
+  const i = tabs.indexOf(document.activeElement as HTMLButtonElement);
+  if (i === -1) return;
+  e.preventDefault();
+  const next =
+    e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (i + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  tabs[next].focus();
+  tabs[next].click();
+}
+
+export function TabsList({ className, onKeyDown, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       role="tablist"
+      onKeyDown={(e) => {
+        onTabListKeyDown(e);
+        onKeyDown?.(e);
+      }}
       className={cn(
-        "inline-flex h-9 items-center gap-1 rounded-md border border-border bg-muted p-1",
+        "flex max-w-full items-end gap-1 overflow-x-auto border-b border-border [scrollbar-width:none]",
         className,
       )}
       {...props}
@@ -66,11 +89,16 @@ export function TabsTrigger({
     <button
       type="button"
       role="tab"
+      id={tabId(ctx.baseId, value)}
       aria-selected={active}
+      aria-controls={panelId(ctx.baseId, value)}
+      tabIndex={active ? 0 : -1}
       onClick={() => ctx.setValue(value)}
       className={cn(
-        "inline-flex h-7 items-center rounded-sm px-3 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring",
-        active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+        "-mb-px inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-t-md border-b-2 px-3 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+        active
+          ? "border-primary text-foreground"
+          : "border-transparent text-muted-foreground hover:border-border hover:text-foreground",
         className,
       )}
     >
@@ -91,7 +119,13 @@ export function TabsContent({
   const ctx = React.useContext(Ctx)!;
   if (ctx.value !== value) return null;
   return (
-    <div role="tabpanel" className={cn("mt-4", className)}>
+    <div
+      role="tabpanel"
+      id={panelId(ctx.baseId, value)}
+      aria-labelledby={tabId(ctx.baseId, value)}
+      tabIndex={0}
+      className={cn("mt-4 focus-visible:outline-2 focus-visible:outline-ring", className)}
+    >
       {children}
     </div>
   );

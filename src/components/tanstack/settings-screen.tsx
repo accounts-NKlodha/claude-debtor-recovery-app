@@ -127,9 +127,8 @@ export function SettingsScreen({
         </CardHeader>
         <CardContent className="pt-0">
           <p className="text-sm text-muted-foreground">
-            Per-client mode editing is not built in this slice — each case already shows and enforces
-            its own automation mode in the case-detail Automation state panel. See{" "}
-            <span className="font-mono text-xs">docs/PLAN.md</span> for the tracked follow-up.
+            Per-client mode editing is not available yet. Each case shows and enforces its own automation
+            mode in the Automation state panel on the case page.
           </p>
         </CardContent>
       </Card>

@@ -10,9 +10,10 @@
  * as gst.$caseId's implicit parent/layout, which silently breaks the
  * detail route (gst.tsx's component has no <Outlet/>).
  */
+import { ShieldCheck } from "lucide-react";
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader } from "@/components/ui/page-header";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { LinkButton } from "@/components/tanstack/link-button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusPill } from "@/components/ui/status-pill";
@@ -37,26 +38,32 @@ function GstIndexPage() {
       {rows.length === 0 ? (
         <EmptyState title="No cases on the GST route right now" />
       ) : (
-        <div className="flex flex-col gap-2">
-          {rows.map(({ c, debtor, org }) => (
-            <Card key={c.id}>
-              <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
-                <div>
-                  <p className="text-sm font-medium">{debtor?.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {org?.legalEntityName} &middot; {formatInr(c.principalOutstanding)}
-                  </p>
+        <Card>
+          <ul className="divide-y divide-border">
+            {rows.map(({ c, debtor, org }) => (
+              <li key={c.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4">
+                <span
+                  aria-hidden="true"
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-accent text-accent-foreground"
+                >
+                  <ShieldCheck className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">{debtor?.name}</p>
+                  <p className="truncate text-xs text-muted-foreground">{org?.legalEntityName}</p>
                 </div>
-                <div className="flex items-center gap-3">
-                  <StatusPill status={c.status} />
-                  <LinkButton href={`/gst/${c.id}`} variant="primary">
-                    Open
-                  </LinkButton>
+                <div className="text-right">
+                  <p className="text-sm font-semibold tabular-nums">{formatInr(c.principalOutstanding)}</p>
+                  <p className="text-[11px] text-muted-foreground">outstanding</p>
                 </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                <StatusPill status={c.status} />
+                <LinkButton href={`/gst/${c.id}`} variant="primary">
+                  Open
+                </LinkButton>
+              </li>
+            ))}
+          </ul>
+        </Card>
       )}
     </div>
   );

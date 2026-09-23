@@ -25,7 +25,7 @@ import {
   type OpenGstAssistedSessionState,
   type PrepareGstNotificationState,
 } from "@/lib/gst.functions";
-import { formatInr } from "@/lib/utils";
+import { cn, formatInr } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -356,28 +356,41 @@ export function GstScreen({ pack }: { pack: GstPack }) {
               <ShieldCheck className="h-4 w-4" /> Evidence gate
             </CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-col gap-2 pt-0 text-sm">
-            {[
-              { label: "Manifest", value: valid ? "Locked" : "Pending field fixes" },
-              {
-                label: "Attachments",
-                value: `${attachments.length} verified`,
-              },
-              {
-                label: "Assisted session",
-                value: session === "idle" ? "Not opened" : session === "opening" ? "Preparing…" : "Opened",
-              },
-              {
-                label: "Reference / screenshot",
-                value: session === "sent" || session === "filing" ? (ref || "Awaiting entry") : "Pending",
-              },
-              { label: "7-day timer", value: session === "filing" ? "Starting…" : "Not started" },
-            ].map((row) => (
-              <div key={row.label} className="flex items-center justify-between gap-3">
-                <span className="text-xs text-muted-foreground">{row.label}</span>
-                <span className="text-xs font-semibold">{row.value}</span>
-              </div>
-            ))}
+          <CardContent className="pt-0 text-sm">
+            <ul className="divide-y divide-border">
+              {[
+                { label: "Manifest", value: valid ? "Locked" : "Pending field fixes", done: valid },
+                {
+                  label: "Attachments",
+                  value: `${attachments.length} verified`,
+                  done: attachments.length > 0,
+                },
+                {
+                  label: "Assisted session",
+                  value: session === "idle" ? "Not opened" : session === "opening" ? "Preparing…" : "Opened",
+                  done: session !== "idle" && session !== "opening",
+                },
+                {
+                  label: "Reference / screenshot",
+                  value: session === "sent" || session === "filing" ? (ref || "Awaiting entry") : "Pending",
+                  done: (session === "sent" || session === "filing") && Boolean(ref),
+                },
+                { label: "7-day timer", value: session === "filing" ? "Starting…" : "Not started", done: false },
+              ].map((row) => (
+                <li key={row.label} className="flex items-center justify-between gap-3 py-2">
+                  <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span
+                      aria-hidden="true"
+                      className={cn("h-1.5 w-1.5 rounded-full", row.done ? "bg-success" : "bg-border")}
+                    />
+                    {row.label}
+                  </span>
+                  <span className={cn("text-xs font-semibold", row.done ? "text-success" : "text-foreground")}>
+                    {row.value}
+                  </span>
+                </li>
+              ))}
+            </ul>
           </CardContent>
         </Card>
 

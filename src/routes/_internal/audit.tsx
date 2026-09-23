@@ -1,12 +1,13 @@
 /**
- * TanStack Start adapter for src/app/(internal)/audit/page.tsx. Identical
- * JSX -- reuses PageHeader, Card, EmptyState verbatim. Authorization is
- * enforced by the parent _internal layout route.
+ * TanStack Start adapter for src/app/(internal)/audit/page.tsx. Same data;
+ * presented as a single ledger list. Authorization is enforced by the
+ * parent _internal layout route.
  */
 import { createFileRoute } from "@tanstack/react-router";
 import { ScrollText } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { getAuditData } from "@/lib/audit.functions";
 
@@ -31,27 +32,42 @@ function AuditPage() {
       />
 
       {entries.length === 0 ? (
-        <EmptyState title="No audit events yet" />
+        <EmptyState icon={<ScrollText />} title="No audit events yet" />
       ) : (
-        <div className="flex flex-col gap-2">
-          {entries.map((e) => (
-            <Card key={e.id}>
-              <CardContent className="flex items-start gap-3 p-4">
-                <ScrollText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <div className="flex flex-wrap items-baseline gap-2">
-                    <span className="font-mono text-xs font-medium">{e.action}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {e.entity} &middot; {e.entityId}
+        <Card>
+          <div className="flex items-center justify-between border-b border-border px-5 py-3 text-xs text-muted-foreground">
+            <span>
+              {entries.length} event{entries.length === 1 ? "" : "s"} · newest first
+            </span>
+            <span className="hidden sm:inline">Append-only</span>
+          </div>
+          <ol className="divide-y divide-border">
+            {entries.map((e) => (
+              <li key={e.id} className="flex flex-col gap-1.5 px-5 py-3.5 sm:flex-row sm:items-start sm:gap-4">
+                <time
+                  dateTime={e.createdAt}
+                  className="shrink-0 text-xs tabular-nums text-muted-foreground sm:w-40 sm:pt-0.5"
+                >
+                  {fmtDate(e.createdAt)}
+                </time>
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs font-medium text-foreground">
+                      {e.action}
                     </span>
+                    <span className="text-xs text-muted-foreground">
+                      {e.entity} &middot; <span className="font-mono">{e.entityId ?? "—"}</span>
+                    </span>
+                    <Badge tone={e.actorRole === "system" ? "neutral" : "primary"} className="ml-auto">
+                      {e.actorRole}
+                    </Badge>
                   </div>
-                  {e.reason ? <p className="text-sm">{e.reason}</p> : null}
+                  {e.reason ? <p className="text-sm text-foreground/90">{e.reason}</p> : null}
                 </div>
-                <span className="shrink-0 text-xs text-muted-foreground">{fmtDate(e.createdAt)}</span>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+              </li>
+            ))}
+          </ol>
+        </Card>
       )}
     </div>
   );

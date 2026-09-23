@@ -4,12 +4,12 @@ import { cn } from "@/lib/utils";
 export type Tone = "neutral" | "success" | "warning" | "danger" | "info" | "primary";
 
 const tones: Record<Tone, string> = {
-  neutral: "bg-muted text-muted-foreground border-border",
-  success: "bg-success-bg text-success border-transparent",
-  warning: "bg-warning-bg text-warning border-transparent",
-  danger: "bg-danger-bg text-danger border-transparent",
-  info: "bg-info-bg text-info border-transparent",
-  primary: "bg-accent text-accent-foreground border-transparent",
+  neutral: "bg-muted text-muted-foreground ring-border",
+  success: "bg-success-bg text-success ring-success/20",
+  warning: "bg-warning-bg text-warning ring-warning/25",
+  danger: "bg-danger-bg text-danger ring-danger/20",
+  info: "bg-info-bg text-info ring-info/20",
+  primary: "bg-accent text-accent-foreground ring-accent-foreground/15",
 };
 
 export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
@@ -21,7 +21,7 @@ export function Badge({ className, tone = "neutral", icon, children, ...props }:
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs font-medium whitespace-nowrap",
+        "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium whitespace-nowrap ring-1 ring-inset",
         tones[tone],
         className,
       )}

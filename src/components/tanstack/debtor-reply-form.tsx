@@ -56,7 +56,7 @@ export function DebtorReplyForm({ caseId }: { caseId: string }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-2 rounded-md border border-border p-3">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 shadow-xs">
       <div className="flex flex-wrap items-center gap-2">
         <Label htmlFor="reply-channel" className="text-xs">Channel</Label>
         <select
@@ -64,7 +64,7 @@ export function DebtorReplyForm({ caseId }: { caseId: string }) {
           name="channel"
           value={channel}
           onChange={(e) => setChannel(e.target.value)}
-          className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+          className="h-8 rounded-md border border-input bg-card px-2 text-sm text-foreground shadow-xs"
         >
           {CHANNEL.map((c) => (
             <option key={c} value={c}>{c}</option>
@@ -76,7 +76,7 @@ export function DebtorReplyForm({ caseId }: { caseId: string }) {
           name="classification"
           value={classification}
           onChange={(e) => setClassification(e.target.value)}
-          className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+          className="h-8 rounded-md border border-input bg-card px-2 text-sm text-foreground shadow-xs"
         >
           {REPLY_CLASSIFICATION.map((c) => (
             <option key={c} value={c}>{c.replace(/_/g, " ")}</option>

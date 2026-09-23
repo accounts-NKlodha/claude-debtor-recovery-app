@@ -10,8 +10,8 @@ import { cn } from "@/lib/utils";
 
 type Variant = "primary" | "outline" | "ghost";
 const variants: Record<Variant, string> = {
-  primary: "bg-primary text-primary-foreground hover:opacity-90",
-  outline: "border border-border bg-card text-foreground hover:bg-muted",
+  primary: "bg-primary text-primary-foreground shadow-xs hover:bg-[color-mix(in_srgb,var(--primary),black_10%)]",
+  outline: "border border-border bg-card text-foreground shadow-xs hover:bg-muted",
   ghost: "text-foreground hover:bg-muted",
 };
 
@@ -30,7 +30,7 @@ export function LinkButton({
     <Link
       to={href}
       className={cn(
-        "inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring",
+        "inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
         variants[variant],
         className,
       )}

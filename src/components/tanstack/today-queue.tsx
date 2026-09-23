@@ -10,7 +10,7 @@
 import * as React from "react";
 import { ArrowRight, Clock, TriangleAlert } from "lucide-react";
 import type { QueueItem } from "@/lib/mock-data";
-import { formatInr } from "@/lib/utils";
+import { cn, formatInr } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { LinkButton } from "@/components/tanstack/link-button";
 import { WaitingOnPill } from "@/components/ui/status-pill";
@@ -63,8 +63,14 @@ export function TodayQueue({ items }: { items: QueueItem[] }) {
             return (
               <li
                 key={item.taskId}
-                className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 sm:flex-row sm:items-center"
+                className={cn(
+                  "relative flex flex-col gap-3 overflow-hidden rounded-lg border border-border bg-card p-4 shadow-xs sm:flex-row sm:items-center",
+                  item.urgent && "border-danger/25",
+                )}
               >
+                {item.urgent ? (
+                  <span aria-hidden="true" className="absolute inset-y-0 left-0 w-1 bg-danger" />
+                ) : null}
                 <span
                   aria-hidden
                   className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold tabular-nums sm:flex"
@@ -89,7 +95,10 @@ export function TodayQueue({ items }: { items: QueueItem[] }) {
                     {item.debtor ? <> &middot; {item.debtor}</> : null}
                   </p>
                   {item.blocker && (
-                    <p className="text-xs text-warning">Blocker: {item.blocker}</p>
+                    <p className="flex items-start gap-1 text-xs text-warning">
+                      <TriangleAlert aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" />
+                      <span>Blocker: {item.blocker}</span>
+                    </p>
                   )}
                 </div>
 

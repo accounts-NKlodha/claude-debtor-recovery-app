@@ -6,13 +6,14 @@ type Size = "sm" | "md" | "lg" | "icon";
 
 const variants: Record<Variant, string> = {
   primary:
-    "bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50",
+    "bg-primary text-primary-foreground shadow-xs hover:bg-[color-mix(in_srgb,var(--primary),black_10%)] disabled:opacity-50",
   secondary:
-    "bg-muted text-foreground hover:bg-[color-mix(in_srgb,var(--muted),black_4%)] disabled:opacity-50",
+    "bg-muted text-foreground hover:bg-[color-mix(in_srgb,var(--muted),var(--foreground)_6%)] disabled:opacity-50",
   outline:
-    "border border-border bg-card text-foreground hover:bg-muted disabled:opacity-50",
+    "border border-border bg-card text-foreground shadow-xs hover:bg-muted disabled:opacity-50",
   ghost: "text-foreground hover:bg-muted disabled:opacity-50",
-  danger: "bg-danger text-white hover:opacity-90 disabled:opacity-50",
+  danger:
+    "bg-danger text-white shadow-xs hover:bg-[color-mix(in_srgb,var(--danger),black_10%)] disabled:opacity-50",
 };
 
 const sizes: Record<Size, string> = {
@@ -34,7 +35,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       ref={ref}
       type={type}
       className={cn(
-        "inline-flex items-center justify-center rounded-md font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-not-allowed",
+        "inline-flex select-none items-center justify-center rounded-md font-medium transition-[background-color,color,box-shadow,opacity] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed [&_svg]:shrink-0",
         variants[variant],
         sizes[size],
         className,

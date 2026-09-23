@@ -2,65 +2,107 @@
 
 /*
  * Debtrecover design tokens.
- * Aesthetic reference: Linear / Stripe dashboard — restrained, high-contrast,
- * dense but calm. Status is always conveyed by text + shape, never colour alone
- * (PRD §9 WCAG 2.1 AA).
+ * Aesthetic reference: a restrained finance/legal workspace — high-contrast,
+ * dense but calm, deep-indigo accent. Status is always conveyed by text +
+ * shape, never colour alone (PRD §9 WCAG 2.1 AA).
  */
 
 :root {
-  --background: #fbfbfc;
-  --foreground: #1c1d21;
-  --card: #ffffff;
-  --card-foreground: #1c1d21;
-  --muted: #f2f3f5;
-  --muted-foreground: #62636c;
-  --border: #e6e7eb;
-  --input: #e6e7eb;
-  --ring: #5b5bd6;
+  color-scheme: light;
 
-  --primary: #5b5bd6;
+  --background: #f6f7f9;
+  --foreground: #16181d;
+  --card: #ffffff;
+  --card-foreground: #16181d;
+  --muted: #f0f2f5;
+  --muted-foreground: #5d6370;
+  --border: #e3e6eb;
+  --input: #d9dde4;
+  --ring: #4453c6;
+
+  --primary: #3f4fc2;
   --primary-foreground: #ffffff;
-  --accent: #ececfb;
-  --accent-foreground: #3a3aa8;
+  --accent: #eceefb;
+  --accent-foreground: #2c3a9e;
+
+  --sidebar: #fbfbfc;
 
   /* semantic status */
-  --success: #1a7f52;
-  --success-bg: #e7f5ee;
-  --warning: #9a6700;
-  --warning-bg: #fdf3d9;
-  --danger: #c0384b;
-  --danger-bg: #fbe9ec;
-  --info: #2a5b9e;
-  --info-bg: #e8f0fb;
+  --success: #18794e;
+  --success-bg: #e6f4ec;
+  --warning: #8f5f00;
+  --warning-bg: #fcf2d7;
+  --danger: #b8323f;
+  --danger-bg: #fbe8ea;
+  --info: #255a9b;
+  --info-bg: #e7effa;
 
   --radius: 0.625rem;
 }
 
 :root[data-theme="dark"],
 :root.dark {
-  --background: #0c0c0f;
-  --foreground: #ededf0;
-  --card: #151518;
-  --card-foreground: #ededf0;
-  --muted: #1d1d22;
-  --muted-foreground: #9a9aa5;
-  --border: #26262c;
-  --input: #26262c;
-  --ring: #7c7cf0;
+  color-scheme: dark;
 
-  --primary: #7c7cf0;
-  --primary-foreground: #0c0c0f;
-  --accent: #22223a;
-  --accent-foreground: #c7c7f5;
+  --background: #0b0c0f;
+  --foreground: #ececf1;
+  --card: #141519;
+  --card-foreground: #ececf1;
+  --muted: #1c1d23;
+  --muted-foreground: #9b9eab;
+  --border: #25272e;
+  --input: #30323b;
+  --ring: #8a93f2;
 
-  --success: #3ecf8e;
-  --success-bg: #10241c;
-  --warning: #e5b95b;
+  --primary: #7f89f0;
+  --primary-foreground: #0b0c0f;
+  --accent: #1f2240;
+  --accent-foreground: #c5caf8;
+
+  --sidebar: #101115;
+
+  --success: #43c98c;
+  --success-bg: #0f2419;
+  --warning: #e3b659;
   --warning-bg: #2a2210;
-  --danger: #f2647c;
+  --danger: #f06b7e;
   --danger-bg: #2c1418;
-  --info: #7db3f0;
+  --info: #7fb2ee;
   --info-bg: #10203a;
+}
+
+/* Follow the OS theme unless the user has explicitly picked one
+ * (ThemeToggle writes data-theme). Mirrors the dark block above. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --background: #0b0c0f;
+    --foreground: #ececf1;
+    --card: #141519;
+    --card-foreground: #ececf1;
+    --muted: #1c1d23;
+    --muted-foreground: #9b9eab;
+    --border: #25272e;
+    --input: #30323b;
+    --ring: #8a93f2;
+
+    --primary: #7f89f0;
+    --primary-foreground: #0b0c0f;
+    --accent: #1f2240;
+    --accent-foreground: #c5caf8;
+
+    --sidebar: #101115;
+
+    --success: #43c98c;
+    --success-bg: #0f2419;
+    --warning: #e3b659;
+    --warning-bg: #2a2210;
+    --danger: #f06b7e;
+    --danger-bg: #2c1418;
+    --info: #7fb2ee;
+    --info-bg: #10203a;
+  }
 }
 
 @theme inline {
@@ -77,6 +119,7 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-sidebar: var(--sidebar);
   --color-success: var(--success);
   --color-success-bg: var(--success-bg);
   --color-warning: var(--warning);
@@ -88,8 +131,10 @@
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  /* Next.js sets --font-geist-* via next/font; the TanStack root loads the
+   * same families by name, hence the fallbacks. */
+  --font-sans: var(--font-geist-sans, "Geist"), ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono, "Geist Mono"), ui-monospace, "Cascadia Mono", monospace;
 }
 
 * {
@@ -104,7 +149,20 @@ body {
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
+::selection {
+  background: color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
 :focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

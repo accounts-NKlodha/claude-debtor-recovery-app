@@ -61,7 +61,7 @@ export function DebtorContactPanel({
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-border p-3">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 shadow-xs">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-col gap-1 text-xs">
           <span className="flex items-center gap-1.5">

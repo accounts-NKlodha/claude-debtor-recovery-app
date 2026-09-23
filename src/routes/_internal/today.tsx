@@ -49,10 +49,11 @@ function TodayPage() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <TodayQueue items={queue} />
         {top ? (
           <SpotlightCard
+            className="lg:sticky lg:top-20 lg:self-start"
             eyebrow="Next best action"
             title={top.nextSafeAction}
             description={
