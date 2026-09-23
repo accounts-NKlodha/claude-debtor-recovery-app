@@ -131,8 +131,8 @@
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
-  /* Next.js sets --font-geist-* via next/font; the TanStack root loads the
-   * same families by name, hence the fallbacks. */
+  /* --font-geist-* come from next/font (Next.js) or
+   * src/styles/tanstack-fonts.css (TanStack); both self-hosted. */
   --font-sans: var(--font-geist-sans, "Geist"), ui-sans-serif, system-ui, "Segoe UI", sans-serif;
   --font-mono: var(--font-geist-mono, "Geist Mono"), ui-monospace, "Cascadia Mono", monospace;
 }

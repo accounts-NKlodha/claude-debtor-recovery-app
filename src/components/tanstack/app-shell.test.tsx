@@ -42,6 +42,38 @@ async function clickSignOut() {
   await user.click(screen.getByRole("menuitem", { name: /sign out/i }));
 }
 
+describe("AppShell header search", () => {
+  it("submits the query to the cases list filter", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await user.type(screen.getByRole("searchbox", { name: "Search cases" }), "  Kaveri {Enter}");
+    expect(navigate).toHaveBeenCalledWith({ to: "/cases", search: { q: "Kaveri" } });
+  });
+
+  it("clears the filter on an empty search", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await user.type(screen.getByRole("searchbox", { name: "Search cases" }), "{Enter}");
+    expect(navigate).toHaveBeenCalledWith({ to: "/cases", search: {} });
+  });
+});
+
+describe("AppShell client surface", () => {
+  it("has no search box and links only built client pages", () => {
+    render(
+      <AppShell surface="client" organisations={[]} user={{ displayName: "Client A", email: null, role: "client" }}>
+        <p>page</p>
+      </AppShell>,
+    );
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    const hrefs = screen.getAllByRole("link").map((a) => a.getAttribute("href"));
+    expect(hrefs).toContain("/client/cases");
+    for (const deferred of ["/client/upload", "/client/confirmations", "/client/statements"]) {
+      expect(hrefs).not.toContain(deferred);
+    }
+  });
+});
+
 describe("AppShell sign-out", () => {
   it("shows a visible error and stays on the page when sign-out fails", async () => {
     signOutFn.mockRejectedValue(new Error("Missing NEXT_PUBLIC_SUPABASE_URL"));

@@ -22,6 +22,8 @@
     "verify": "npm run typecheck && npm run lint && npm run test && npm run build"
   },
   "dependencies": {
+    "@fontsource-variable/geist": "5.3.0",
+    "@fontsource-variable/geist-mono": "5.3.0",
     "@hookform/resolvers": "^5.9.1",
     "@lovable.dev/vite-tanstack-config": "2.23.1",
     "@supabase/ssr": "^0.12.7",

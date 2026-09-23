@@ -1,5 +1,6 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import appCss from "@/app/globals.css?url";
+import fontsCss from "@/styles/tanstack-fonts.css?url";
 import { Providers } from "@/components/providers";
 
 // Same pre-hydration theme init as src/app/layout.tsx: applies a saved
@@ -19,12 +20,7 @@ export const Route = createRootRoute({
       },
     ],
     links: [
-      { rel: "preconnect", href: "https://fonts.googleapis.com" },
-      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
-      {
-        rel: "stylesheet",
-        href: "https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap",
-      },
+      { rel: "stylesheet", href: fontsCss },
       { rel: "stylesheet", href: appCss },
     ],
   }),

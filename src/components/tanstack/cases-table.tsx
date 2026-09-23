@@ -128,9 +128,9 @@ const columns = [
   }),
 ];
 
-export function CasesTable({ rows }: { rows: CaseRow[] }) {
+export function CasesTable({ rows, initialQuery }: { rows: CaseRow[]; initialQuery?: string }) {
   const navigate = useNavigate();
-  const [globalFilter, setGlobalFilter] = React.useState("");
+  const [globalFilter, setGlobalFilter] = React.useState(initialQuery ?? "");
   const [statusFilter, setStatusFilter] = React.useState<"" | CaseStatus>("");
   const [quickFilter, setQuickFilter] = React.useState<QuickFilter>("all");
   const [sorting, setSorting] = React.useState<{ id: string; desc: boolean }[]>([

@@ -1,0 +1,10 @@
+/* Self-hosted Geist for the TanStack app (the Next.js app gets the same
+ * families from next/font, which also self-hosts). Bundled from npm and
+ * served same-origin -- no third-party font request. */
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+:root {
+  --font-geist-sans: "Geist Variable";
+  --font-geist-mono: "Geist Mono Variable";
+}

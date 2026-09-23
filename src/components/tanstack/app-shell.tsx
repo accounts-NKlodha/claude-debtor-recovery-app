@@ -24,9 +24,6 @@ import {
   Building2,
   ScrollText,
   LayoutDashboard,
-  Upload,
-  CheckCircle2,
-  FileSpreadsheet,
   CircleAlert,
   LogOut,
 } from "lucide-react";
@@ -81,14 +78,13 @@ const INTERNAL_NAV: NavSection[] = [
   },
 ];
 
+// Upload, Confirmations and Statements are deferred for V1 (their routes
+// still exist as placeholders but are not linked).
 const CLIENT_NAV: NavSection[] = [
   {
     items: [
       { href: "/client", label: "Overview", Icon: LayoutDashboard },
       { href: "/client/cases", label: "Cases", Icon: FolderKanban },
-      { href: "/client/upload", label: "Upload", Icon: Upload },
-      { href: "/client/confirmations", label: "Confirmations", Icon: CheckCircle2 },
-      { href: "/client/statements", label: "Statements / Fees", Icon: FileSpreadsheet },
     ],
   },
 ];
@@ -197,7 +193,6 @@ export function AppShell({
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = React.useState(false);
   const [mobileOpen, setMobileOpen] = React.useState(false);
-  const [org, setOrg] = React.useState(organisations[0]);
   const [signingOut, setSigningOut] = React.useState(false);
   const [signOutError, setSignOutError] = React.useState(false);
   const closeDrawerRef = React.useRef<HTMLButtonElement>(null);
@@ -272,37 +267,38 @@ export function AppShell({
           </span>
         </Link>
 
-        {surface === "client" && (
-          <div className="ml-1">
-            <DropdownMenu
-              triggerLabel="Switch organisation"
-              trigger={
-                <span className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-2 text-xs font-medium shadow-xs">
-                  <Building2 className="h-3.5 w-3.5" />
-                  <span className="max-w-32 truncate">{org?.legalEntityName ?? "Select client"}</span>
-                </span>
-              }
-              align="start"
-            >
-              <DropdownMenuLabel>Switch organisation</DropdownMenuLabel>
-              {organisations.map((o) => (
-                <DropdownMenuItem key={o.id} onClick={() => setOrg(o)}>
-                  {o.legalEntityName}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenu>
-          </div>
-        )}
+        {/* Static for V1: the portal's data always resolves the session's
+            first organisation, and there is no server-side org switch yet. */}
+        {surface === "client" && organisations[0] ? (
+          <span
+            className="ml-1 inline-flex h-8 min-w-0 items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 text-xs font-medium"
+            title={organisations[0].legalEntityName}
+          >
+            <Building2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="max-w-40 truncate">{organisations[0].legalEntityName}</span>
+          </span>
+        ) : null}
 
-        <div className="relative ml-auto hidden w-72 md:block">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder="Search cases, debtors, GSTIN…"
-            aria-label="Search"
-            className="h-8 bg-muted/60 pl-8 text-xs shadow-none"
-          />
-        </div>
+        {surface === "internal" ? (
+          <form
+            role="search"
+            className="relative ml-auto hidden w-72 md:block"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const q = String(new FormData(e.currentTarget).get("q") ?? "").trim();
+              void navigate({ to: "/cases", search: q ? { q } : {} });
+            }}
+          >
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              name="q"
+              placeholder="Search cases, debtors, GSTIN…"
+              aria-label="Search cases"
+              className="h-8 bg-muted/60 pl-8 text-xs shadow-none"
+            />
+          </form>
+        ) : null}
 
         <div className="ml-auto flex items-center gap-1 md:ml-2">
           <ThemeToggle />

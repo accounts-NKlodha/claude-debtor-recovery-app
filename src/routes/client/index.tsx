@@ -1,7 +1,7 @@
 /**
  * TanStack Start adapter for src/app/(client)/client/page.tsx. Same
  * data-assembly (presentation differs slightly) -- reuses PageHeader, Card, Badge,
- * SpotlightCard, the chart components, CLIENT_SAFE_LABEL and
+ * SpotlightCard, the chart components and
  * formatInr/formatInrCompact verbatim; only LinkButton is swapped for the
  * TanStack adapter. Authorization is enforced by the parent client layout
  * route, same as the Next.js (client) route group.
@@ -17,7 +17,6 @@ import { RecoveryTrend } from "@/components/charts/recovery-trend";
 import { AgeingBars } from "@/components/charts/ageing-bars";
 import { StageFunnel } from "@/components/charts/stage-funnel";
 import { getClientOverviewData } from "@/lib/client-portal.functions";
-import { CLIENT_SAFE_LABEL } from "@/contract/enums";
 import { formatInr, formatInrCompact } from "@/lib/utils";
 
 export const Route = createFileRoute("/client/")({
@@ -43,7 +42,7 @@ function ClientOverviewPage() {
         title="Your recoveries at a glance"
         description={`${org.legalEntityName} — updated just now`}
         size="hero"
-        actions={<LinkButton href="/client/upload" variant="primary">Upload invoices</LinkButton>}
+        actions={<LinkButton href="/client/cases" variant="primary">View your cases</LinkButton>}
       />
 
       {overview.actionsRequired > 0 ? (
@@ -54,7 +53,8 @@ function ClientOverviewPage() {
               {overview.actionsRequired} item{overview.actionsRequired === 1 ? "" : "s"} need your confirmation
             </p>
             <p className="text-xs opacity-90">
-              Confirming a reported payment or correcting a contact keeps recovery moving.
+              Confirming a reported payment or correcting a contact keeps recovery moving. Please confirm these
+              with your recovery team.
             </p>
           </div>
         </div>
@@ -72,7 +72,7 @@ function ClientOverviewPage() {
       </div>
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <Card>
+        <Card className="min-w-0">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Your cases</CardTitle>
             <LinkButton href="/client/cases">View all</LinkButton>
@@ -83,10 +83,15 @@ function ClientOverviewPage() {
                 key={c.id}
                 className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5"
               >
-                <span className="text-sm">{c.groupKey ?? c.id}</span>
-                <div className="flex items-center gap-3">
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium">{c.debtorName}</span>
+                  {c.reference ? (
+                    <span className="block truncate text-[11px] text-muted-foreground">Ref. {c.reference}</span>
+                  ) : null}
+                </span>
+                <div className="flex shrink-0 items-center gap-3">
                   <span className="text-sm font-medium tabular-nums">{formatInr(c.principalOutstanding)}</span>
-                  <Badge tone="info">{CLIENT_SAFE_LABEL[c.status] ?? "In progress"}</Badge>
+                  <Badge tone={c.closed ? "success" : "info"}>{c.stage}</Badge>
                 </div>
               </div>
             ))}
@@ -100,13 +105,6 @@ function ClientOverviewPage() {
             overview.upcomingAction?.when
               ? `Expected ${new Date(overview.upcomingAction.when).toLocaleDateString("en-IN", { dateStyle: "medium" })}`
               : "We'll notify you here as soon as something needs your confirmation."
-          }
-          action={
-            overview.upcomingAction ? (
-              <LinkButton href="/client/confirmations" variant="primary">
-                Review
-              </LinkButton>
-            ) : null
           }
         />
       </div>

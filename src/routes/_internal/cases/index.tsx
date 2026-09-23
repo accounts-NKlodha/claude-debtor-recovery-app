@@ -19,6 +19,9 @@ import { CasesTable } from "@/components/tanstack/cases-table";
 import { getCasesListData } from "@/lib/cases.functions";
 
 export const Route = createFileRoute("/_internal/cases/")({
+  // `q` pre-fills the table filter; set by the header search box.
+  validateSearch: (search: Record<string, unknown>): { q?: string } =>
+    typeof search.q === "string" && search.q.trim() ? { q: search.q.trim() } : {},
   loader: () => getCasesListData(),
   component: CasesPage,
   head: () => ({ meta: [{ title: "Cases — Debtrecover" }] }),
@@ -26,6 +29,7 @@ export const Route = createFileRoute("/_internal/cases/")({
 
 function CasesPage() {
   const { rows } = Route.useLoaderData();
+  const { q } = Route.useSearch();
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
@@ -33,7 +37,7 @@ function CasesPage() {
         description="Authorized cases stay separate by client and legal entity. Sort and filter to triage; click a row for the full case."
         actions={<LinkButton href="/intake" variant="primary">+ New intake</LinkButton>}
       />
-      <CasesTable rows={rows} />
+      <CasesTable key={q ?? ""} rows={rows} initialQuery={q} />
     </div>
   );
 }
