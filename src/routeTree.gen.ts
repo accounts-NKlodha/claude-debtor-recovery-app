@@ -17,6 +17,7 @@ import { Route as InternalAuditRouteImport } from './routes/_internal/audit'
 import { Route as InternalCommunicationsRouteImport } from './routes/_internal/communications'
 import { Route as InternalDashboardRouteImport } from './routes/_internal/dashboard'
 import { Route as InternalIntakeRouteImport } from './routes/_internal/intake'
+import { Route as InternalPaymentsRouteImport } from './routes/_internal/payments'
 import { Route as InternalTodayRouteImport } from './routes/_internal/today'
 import { Route as ClientIndexRouteImport } from './routes/client/index'
 import { Route as ClientCasesRouteImport } from './routes/client/cases'
@@ -27,6 +28,10 @@ import { Route as InternalCasesIndexRouteImport } from './routes/_internal/cases
 import { Route as InternalCasesIdRouteImport } from './routes/_internal/cases/$id'
 import { Route as InternalClientsIndexRouteImport } from './routes/_internal/clients/index'
 import { Route as InternalClientsNewRouteImport } from './routes/_internal/clients/new'
+import { Route as InternalGstIndexRouteImport } from './routes/_internal/gst/index'
+import { Route as InternalGstCaseIdRouteImport } from './routes/_internal/gst/$caseId'
+import { Route as InternalMsmeIndexRouteImport } from './routes/_internal/msme/index'
+import { Route as InternalMsmeCaseIdRouteImport } from './routes/_internal/msme/$caseId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -65,6 +70,11 @@ const InternalDashboardRoute = InternalDashboardRouteImport.update({
 const InternalIntakeRoute = InternalIntakeRouteImport.update({
   id: '/intake',
   path: '/intake',
+  getParentRoute: () => InternalRoute,
+} as any)
+const InternalPaymentsRoute = InternalPaymentsRouteImport.update({
+  id: '/payments',
+  path: '/payments',
   getParentRoute: () => InternalRoute,
 } as any)
 const InternalTodayRoute = InternalTodayRouteImport.update({
@@ -117,6 +127,26 @@ const InternalClientsNewRoute = InternalClientsNewRouteImport.update({
   path: '/clients/new',
   getParentRoute: () => InternalRoute,
 } as any)
+const InternalGstIndexRoute = InternalGstIndexRouteImport.update({
+  id: '/gst/',
+  path: '/gst/',
+  getParentRoute: () => InternalRoute,
+} as any)
+const InternalGstCaseIdRoute = InternalGstCaseIdRouteImport.update({
+  id: '/gst/$caseId',
+  path: '/gst/$caseId',
+  getParentRoute: () => InternalRoute,
+} as any)
+const InternalMsmeIndexRoute = InternalMsmeIndexRouteImport.update({
+  id: '/msme/',
+  path: '/msme/',
+  getParentRoute: () => InternalRoute,
+} as any)
+const InternalMsmeCaseIdRoute = InternalMsmeCaseIdRouteImport.update({
+  id: '/msme/$caseId',
+  path: '/msme/$caseId',
+  getParentRoute: () => InternalRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -126,6 +156,7 @@ export interface FileRoutesByFullPath {
   '/communications': typeof InternalCommunicationsRoute
   '/dashboard': typeof InternalDashboardRoute
   '/intake': typeof InternalIntakeRoute
+  '/payments': typeof InternalPaymentsRoute
   '/today': typeof InternalTodayRoute
   '/client/cases': typeof ClientCasesRoute
   '/client/confirmations': typeof ClientConfirmationsRoute
@@ -134,8 +165,12 @@ export interface FileRoutesByFullPath {
   '/client/': typeof ClientIndexRoute
   '/cases/$id': typeof InternalCasesIdRoute
   '/clients/new': typeof InternalClientsNewRoute
+  '/gst/$caseId': typeof InternalGstCaseIdRoute
+  '/msme/$caseId': typeof InternalMsmeCaseIdRoute
   '/cases/': typeof InternalCasesIndexRoute
   '/clients/': typeof InternalClientsIndexRoute
+  '/gst/': typeof InternalGstIndexRoute
+  '/msme/': typeof InternalMsmeIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -144,6 +179,7 @@ export interface FileRoutesByTo {
   '/communications': typeof InternalCommunicationsRoute
   '/dashboard': typeof InternalDashboardRoute
   '/intake': typeof InternalIntakeRoute
+  '/payments': typeof InternalPaymentsRoute
   '/today': typeof InternalTodayRoute
   '/client/cases': typeof ClientCasesRoute
   '/client/confirmations': typeof ClientConfirmationsRoute
@@ -152,8 +188,12 @@ export interface FileRoutesByTo {
   '/client': typeof ClientIndexRoute
   '/cases/$id': typeof InternalCasesIdRoute
   '/clients/new': typeof InternalClientsNewRoute
+  '/gst/$caseId': typeof InternalGstCaseIdRoute
+  '/msme/$caseId': typeof InternalMsmeCaseIdRoute
   '/cases': typeof InternalCasesIndexRoute
   '/clients': typeof InternalClientsIndexRoute
+  '/gst': typeof InternalGstIndexRoute
+  '/msme': typeof InternalMsmeIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -165,6 +205,7 @@ export interface FileRoutesById {
   '/_internal/communications': typeof InternalCommunicationsRoute
   '/_internal/dashboard': typeof InternalDashboardRoute
   '/_internal/intake': typeof InternalIntakeRoute
+  '/_internal/payments': typeof InternalPaymentsRoute
   '/_internal/today': typeof InternalTodayRoute
   '/client/cases': typeof ClientCasesRoute
   '/client/confirmations': typeof ClientConfirmationsRoute
@@ -173,8 +214,12 @@ export interface FileRoutesById {
   '/client/': typeof ClientIndexRoute
   '/_internal/cases/$id': typeof InternalCasesIdRoute
   '/_internal/clients/new': typeof InternalClientsNewRoute
+  '/_internal/gst/$caseId': typeof InternalGstCaseIdRoute
+  '/_internal/msme/$caseId': typeof InternalMsmeCaseIdRoute
   '/_internal/cases/': typeof InternalCasesIndexRoute
   '/_internal/clients/': typeof InternalClientsIndexRoute
+  '/_internal/gst/': typeof InternalGstIndexRoute
+  '/_internal/msme/': typeof InternalMsmeIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -186,6 +231,7 @@ export interface FileRouteTypes {
     | '/communications'
     | '/dashboard'
     | '/intake'
+    | '/payments'
     | '/today'
     | '/client/cases'
     | '/client/confirmations'
@@ -194,8 +240,12 @@ export interface FileRouteTypes {
     | '/client/'
     | '/cases/$id'
     | '/clients/new'
+    | '/gst/$caseId'
+    | '/msme/$caseId'
     | '/cases/'
     | '/clients/'
+    | '/gst/'
+    | '/msme/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -204,6 +254,7 @@ export interface FileRouteTypes {
     | '/communications'
     | '/dashboard'
     | '/intake'
+    | '/payments'
     | '/today'
     | '/client/cases'
     | '/client/confirmations'
@@ -212,8 +263,12 @@ export interface FileRouteTypes {
     | '/client'
     | '/cases/$id'
     | '/clients/new'
+    | '/gst/$caseId'
+    | '/msme/$caseId'
     | '/cases'
     | '/clients'
+    | '/gst'
+    | '/msme'
   id:
     | '__root__'
     | '/'
@@ -224,6 +279,7 @@ export interface FileRouteTypes {
     | '/_internal/communications'
     | '/_internal/dashboard'
     | '/_internal/intake'
+    | '/_internal/payments'
     | '/_internal/today'
     | '/client/cases'
     | '/client/confirmations'
@@ -232,8 +288,12 @@ export interface FileRouteTypes {
     | '/client/'
     | '/_internal/cases/$id'
     | '/_internal/clients/new'
+    | '/_internal/gst/$caseId'
+    | '/_internal/msme/$caseId'
     | '/_internal/cases/'
     | '/_internal/clients/'
+    | '/_internal/gst/'
+    | '/_internal/msme/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -299,6 +359,13 @@ declare module '@tanstack/react-router' {
       path: '/intake'
       fullPath: '/intake'
       preLoaderRoute: typeof InternalIntakeRouteImport
+      parentRoute: typeof InternalRoute
+    }
+    '/_internal/payments': {
+      id: '/_internal/payments'
+      path: '/payments'
+      fullPath: '/payments'
+      preLoaderRoute: typeof InternalPaymentsRouteImport
       parentRoute: typeof InternalRoute
     }
     '/_internal/today': {
@@ -371,6 +438,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InternalClientsNewRouteImport
       parentRoute: typeof InternalRoute
     }
+    '/_internal/gst/': {
+      id: '/_internal/gst/'
+      path: '/gst'
+      fullPath: '/gst/'
+      preLoaderRoute: typeof InternalGstIndexRouteImport
+      parentRoute: typeof InternalRoute
+    }
+    '/_internal/gst/$caseId': {
+      id: '/_internal/gst/$caseId'
+      path: '/gst/$caseId'
+      fullPath: '/gst/$caseId'
+      preLoaderRoute: typeof InternalGstCaseIdRouteImport
+      parentRoute: typeof InternalRoute
+    }
+    '/_internal/msme/': {
+      id: '/_internal/msme/'
+      path: '/msme'
+      fullPath: '/msme/'
+      preLoaderRoute: typeof InternalMsmeIndexRouteImport
+      parentRoute: typeof InternalRoute
+    }
+    '/_internal/msme/$caseId': {
+      id: '/_internal/msme/$caseId'
+      path: '/msme/$caseId'
+      fullPath: '/msme/$caseId'
+      preLoaderRoute: typeof InternalMsmeCaseIdRouteImport
+      parentRoute: typeof InternalRoute
+    }
   }
 }
 
@@ -379,11 +474,16 @@ interface InternalRouteChildren {
   InternalCommunicationsRoute: typeof InternalCommunicationsRoute
   InternalDashboardRoute: typeof InternalDashboardRoute
   InternalIntakeRoute: typeof InternalIntakeRoute
+  InternalPaymentsRoute: typeof InternalPaymentsRoute
   InternalTodayRoute: typeof InternalTodayRoute
   InternalCasesIdRoute: typeof InternalCasesIdRoute
   InternalClientsNewRoute: typeof InternalClientsNewRoute
+  InternalGstCaseIdRoute: typeof InternalGstCaseIdRoute
+  InternalMsmeCaseIdRoute: typeof InternalMsmeCaseIdRoute
   InternalCasesIndexRoute: typeof InternalCasesIndexRoute
   InternalClientsIndexRoute: typeof InternalClientsIndexRoute
+  InternalGstIndexRoute: typeof InternalGstIndexRoute
+  InternalMsmeIndexRoute: typeof InternalMsmeIndexRoute
 }
 
 const InternalRouteChildren: InternalRouteChildren = {
@@ -391,11 +491,16 @@ const InternalRouteChildren: InternalRouteChildren = {
   InternalCommunicationsRoute: InternalCommunicationsRoute,
   InternalDashboardRoute: InternalDashboardRoute,
   InternalIntakeRoute: InternalIntakeRoute,
+  InternalPaymentsRoute: InternalPaymentsRoute,
   InternalTodayRoute: InternalTodayRoute,
   InternalCasesIdRoute: InternalCasesIdRoute,
   InternalClientsNewRoute: InternalClientsNewRoute,
+  InternalGstCaseIdRoute: InternalGstCaseIdRoute,
+  InternalMsmeCaseIdRoute: InternalMsmeCaseIdRoute,
   InternalCasesIndexRoute: InternalCasesIndexRoute,
   InternalClientsIndexRoute: InternalClientsIndexRoute,
+  InternalGstIndexRoute: InternalGstIndexRoute,
+  InternalMsmeIndexRoute: InternalMsmeIndexRoute,
 }
 
 const InternalRouteWithChildren = InternalRoute._addFileChildren(
