@@ -18,6 +18,7 @@
  * repository seam.
  */
 
+import { buildReminderEmail } from "@/domain/reminder-email";
 import { AUTOMATION_BLOCKED_AUDIT_ACTION, assertAutomationEnabled } from "@/domain/automation-guard";
 import { buildGstFiledReason, GST_EVIDENCE_ACTIONS, reconstructGstEvidence, type GstEvidence } from "@/domain/gst-evidence";
 import { estimateSuccessFee } from "@/domain/fees";
@@ -1137,6 +1138,7 @@ export class SupabaseRepository implements Repository {
     templateParams?: string[],
     idempotencyKeyOverride?: string,
     reasonLabel = "Initial reminder",
+    html?: string,
   ): Promise<{
     communication: Communication;
     outcome: "success" | "already_sent" | "retryable_failure" | "permanent_failure" | "human_action_required" | "drift_detected";
@@ -1202,6 +1204,7 @@ export class SupabaseRepository implements Repository {
           subject: subject ?? undefined,
           body,
           templateParams,
+          html,
         }),
       idempotencyKey,
     );
@@ -1271,6 +1274,19 @@ export class SupabaseRepository implements Repository {
       legalEntityName: org?.legalEntityName ?? "our client",
       invoiceNumber: invoices[0]?.invoiceNumber ?? null,
     });
+    // Debtor-facing email: same subject, plus a plain-text body and an HTML body built from the same data.
+    const email = buildReminderEmail({
+      creditorName: org?.legalEntityName ?? "our client",
+      debtorName: debtor?.name ?? "",
+      invoiceNumber: invoices[0]?.invoiceNumber ?? null,
+      invoiceAmountPaise: invoices[0]?.invoiceTotal ?? null,
+      dueDate: invoices[0]?.dueDate ?? null,
+      outstandingPaise: invoices[0]?.outstandingBalance ?? kase.principalOutstanding,
+      upiId: org?.upiId,
+      upiPayeeName: org?.upiPayeeName,
+      otherInvoiceCount: Math.max(0, invoices.filter((i) => i.outstandingBalance > 0).length - 1),
+      totalOutstandingPaise: kase.principalOutstanding,
+    });
 
     let alreadyRemindedInvoiceIds: ReadonlySet<string> = new Set();
     let emailInitialAlreadySent = false;
@@ -1308,6 +1324,7 @@ export class SupabaseRepository implements Repository {
       body: string;
       templateParams?: string[];
       idempotencyKey?: string;
+      html?: string;
     }[] = [];
     const warnings: string[] = [];
     if (whatsAppPlan.kind === "attempt") channels.push(whatsAppPlan.entry);
@@ -1315,7 +1332,7 @@ export class SupabaseRepository implements Repository {
     // The initial email is case-level and sent at most once per case: a
     // reminder for another invoice must never repeat it.
     if (debtor?.email && !emailInitialAlreadySent) {
-      channels.push({ channel: "email", to: debtor.email, templateKey: "reminder_initial_email_v1", templateVersion: 1, subject, body });
+      channels.push({ channel: "email", to: debtor.email, templateKey: "reminder_initial_email_v1", templateVersion: 1, subject, body: email.text, html: email.html });
     }
     if (channels.length === 0) {
       if (whatsAppPlan.kind === "skipped") {
@@ -1349,6 +1366,8 @@ export class SupabaseRepository implements Repository {
           options.forceRetryAfterAmbiguous ?? false,
           c.templateParams,
           c.idempotencyKey,
+          undefined,
+          c.html,
         ),
       );
     }

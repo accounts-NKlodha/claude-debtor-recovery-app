@@ -6,6 +6,7 @@
  * can't mutate shared demo state.
  */
 
+import { buildReminderEmail } from "@/domain/reminder-email";
 import { AUTOMATION_BLOCKED_AUDIT_ACTION, assertAutomationEnabled } from "@/domain/automation-guard";
 import { buildGstFiledReason, GST_EVIDENCE_ACTIONS, reconstructGstEvidence } from "@/domain/gst-evidence";
 import { nanoid } from "nanoid";
@@ -556,6 +557,7 @@ export class MemoryRepository implements Repository {
     forceRetryAfterAmbiguous: boolean,
     templateParams?: string[],
     idempotencyKeyOverride?: string,
+    html?: string,
   ): Promise<{
     communication: Communication;
     outcome: "success" | "already_sent" | "retryable_failure" | "permanent_failure" | "human_action_required" | "drift_detected";
@@ -588,7 +590,7 @@ export class MemoryRepository implements Repository {
 
     const adapter = channel === "whatsapp" ? getAdapters().whatsapp : getAdapters().email;
     const sendOutcome = await runAdapter(
-      (key) => adapter.send({ idempotencyKey: key, caseId, channel, to, templateKey, templateVersion, subject: subject ?? undefined, body, templateParams }),
+      (key) => adapter.send({ idempotencyKey: key, caseId, channel, to, templateKey, templateVersion, subject: subject ?? undefined, body, templateParams, html }),
       idempotencyKey,
     );
 
@@ -639,6 +641,19 @@ export class MemoryRepository implements Repository {
       legalEntityName: org?.legalEntityName ?? "our client",
       invoiceNumber: invoice?.invoiceNumber ?? null,
     });
+    const allInvoices = mock.listInvoicesForCase(caseId);
+    const email = buildReminderEmail({
+      creditorName: org?.legalEntityName ?? "our client",
+      debtorName: debtor?.name ?? "",
+      invoiceNumber: invoice?.invoiceNumber ?? null,
+      invoiceAmountPaise: invoice?.invoiceTotal ?? null,
+      dueDate: invoice?.dueDate ?? null,
+      outstandingPaise: invoice?.outstandingBalance ?? kase.principalOutstanding,
+      upiId: org?.upiId,
+      upiPayeeName: org?.upiPayeeName,
+      otherInvoiceCount: Math.max(0, allInvoices.filter((i) => i.outstandingBalance > 0).length - 1),
+      totalOutstandingPaise: kase.principalOutstanding,
+    });
 
     let alreadyRemindedInvoiceIds: ReadonlySet<string> = new Set();
     let emailInitialAlreadySent = false;
@@ -671,6 +686,7 @@ export class MemoryRepository implements Repository {
       body: string;
       templateParams?: string[];
       idempotencyKey?: string;
+      html?: string;
     }[] = [];
     const warnings: string[] = [];
     if (whatsAppPlan.kind === "attempt") channels.push(whatsAppPlan.entry);
@@ -678,7 +694,7 @@ export class MemoryRepository implements Repository {
     // The initial email is case-level and sent at most once per case: a
     // reminder for another invoice must never repeat it.
     if (debtor?.email && !emailInitialAlreadySent) {
-      channels.push({ channel: "email", to: debtor.email, templateKey: "reminder_initial_email_v1", templateVersion: 1, subject, body });
+      channels.push({ channel: "email", to: debtor.email, templateKey: "reminder_initial_email_v1", templateVersion: 1, subject, body: email.text, html: email.html });
     }
     if (channels.length === 0) {
       if (whatsAppPlan.kind === "skipped") {
@@ -711,6 +727,7 @@ export class MemoryRepository implements Repository {
           options.forceRetryAfterAmbiguous ?? false,
           c.templateParams,
           c.idempotencyKey,
+          c.html,
         ),
       );
     }

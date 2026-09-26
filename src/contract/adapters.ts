@@ -45,6 +45,8 @@ export interface SendMessageInput {
    * wire payload for a template-based channel.
    */
   templateParams?: string[];
+  /** Optional rich (HTML) rendering for email channels; `body` stays the plain-text fallback and the durable record. */
+  html?: string;
 }
 
 export interface MessagingAdapter {

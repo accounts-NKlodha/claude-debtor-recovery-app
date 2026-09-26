@@ -221,6 +221,11 @@ describe("SupabaseRepository.sendInitialReminder: WhatsApp production safety", (
     // any outcome, period.
     expect(fakeWhatsappAdapter.send).not.toHaveBeenCalled();
     expect(fakeEmailAdapter.send).toHaveBeenCalledTimes(1);
+    // the Supabase path hands the adapter both the plain-text body and the HTML alternative
+    const emailCall = fakeEmailAdapter.send.mock.calls[0][0];
+    expect(emailCall.html).toContain("<!DOCTYPE html>");
+    expect(emailCall.body).toContain("Dear ");
+    expect(emailCall.body).not.toMatch(/<[a-z]/i);
 
     // The database-level proof: no begin_communication_send call requests
     // p_channel: "whatsapp" -- so no communication/communication_delivery

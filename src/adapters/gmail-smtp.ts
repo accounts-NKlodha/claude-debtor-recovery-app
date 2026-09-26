@@ -155,7 +155,7 @@ export const gmailSmtp: MessagingAdapter = {
         to: input.to,
         subject: input.subject ?? "Payment reminder",
         text: input.body,
-        html: `<p>${escapeHtml(input.body)}</p>`,
+        html: input.html ?? `<p>${escapeHtml(input.body)}</p>`,
       });
 
       if (info.rejected && info.rejected.length > 0) {

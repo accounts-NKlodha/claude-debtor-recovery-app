@@ -121,7 +121,16 @@ describe("V2 WhatsApp reminder: durable send through the real communication path
     expect(sent.templateKey).toBe("reminder_initial_email_v1");
     expect(sent.templateParams).toBeUndefined();
     expect(sent.subject).toContain("Payment reminder");
-    expect(sent.body).toContain("N K Lodha & Co on behalf of");
+    // plain-text fallback + HTML alternative, same core data (redesigned debtor email)
+    expect(sent.body).toContain("on behalf of");
+    expect(sent.body).toContain("Invoice number: WA-TEST-001");
+    expect(sent.body).toContain("UPI ID: acme@okaxis");
+    expect(sent.html).toContain("<!DOCTYPE html>");
+    expect(sent.html).toContain("WA-TEST-001");
+    expect(sent.html).toContain("acme@okaxis");
+    expect(sent.html).not.toMatch(/<script/i);
+    // the durable record stores the plain-text body
+    expect(result.communications.find((c) => c.channel === "email")!.body).toBe(sent.body);
 
     const email = result.communications.find((c) => c.channel === "email")!;
     expect(email.subject).toContain("Payment reminder");
