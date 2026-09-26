@@ -2,16 +2,30 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "prod-uat",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "start", "--", "--port", "3020"],
-      "port": 3020
+      "name": "tanstack-dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/uat-supabase-dev.mjs",
+        "demo"
+      ],
+      "port": 8080
     },
     {
-      "name": "tanstack-dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "tanstack:dev"],
+      "name": "tanstack-supabase-uat",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/uat-supabase-dev.mjs"
+      ],
       "port": 8080
+    },
+    {
+      "name": "tanstack-supabase-uat-prod",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/uat-supabase-dev.mjs",
+        "preview"
+      ],
+      "port": 4173
     }
   ]
 }
