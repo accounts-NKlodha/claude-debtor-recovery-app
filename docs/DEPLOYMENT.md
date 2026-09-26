@@ -60,6 +60,12 @@ ADAPTER_PROFILE=mock                          # ignored for email in production 
 # inferred from the credentials present). Unset/unknown fails closed (no send),
 # never falls back to a mock.
 #
+#   V1 PRODUCTION DECISION: EMAIL_PROVIDER=gmail-api for Lovable / Cloudflare Worker hosting.
+#     gmail-api  = hosted / Worker production (Gmail REST API, OAuth scope gmail.send only)
+#     gmail-smtp = local / self-hosted legacy only (never on Workers)
+#     Lovable's native Gmail connector = FUTURE evaluation only, not used for V1: its send
+#     contract (HTML/multipart, message id, limits) is not publicly documented and its
+#     scopes may be broader than send-only. Revisit once verified in-project.
 #   HOSTED / CLOUDFLARE WORKER PRODUCTION (Lovable etc.):  EMAIL_PROVIDER=gmail-api
 #   Nodemailer/SMTP is NOT used for Worker deployment: Workers reject the TLS-to-IP
 #   connection Nodemailer makes (verified in workerd), and SMTP is refused there.
