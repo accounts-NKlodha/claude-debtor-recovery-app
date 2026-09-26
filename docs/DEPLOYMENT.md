@@ -55,11 +55,24 @@ DATABASE_URL=postgresql://...<region>...      # for migrations -- region per cur
 NEXT_PUBLIC_APP_URL=https://debtor.nklodha.in
 ADAPTER_PROFILE=mock                          # ignored for email in production -- see below; still gates whatsapp/gst/msme/etc.
 
-# Email delivery (Gmail SMTP + Google App Password -- docs/email-delivery/index.md).
-# Production always uses the real adapter regardless of ADAPTER_PROFILE; a
-# missing/malformed value here fails closed (no send), never falls back to
-# a mock. SMTP_APP_PASSWORD is the one secret -- server-only, never
-# NEXT_PUBLIC_*, never logged, never committed.
+# Email delivery. Production always uses a REAL adapter regardless of
+# ADAPTER_PROFILE, and which one is chosen EXPLICITLY by EMAIL_PROVIDER (never
+# inferred from the credentials present). Unset/unknown fails closed (no send),
+# never falls back to a mock.
+#
+#   HOSTED / CLOUDFLARE WORKER PRODUCTION (Lovable etc.):  EMAIL_PROVIDER=gmail-api
+#   Nodemailer/SMTP is NOT used for Worker deployment: Workers reject the TLS-to-IP
+#   connection Nodemailer makes (verified in workerd), and SMTP is refused there.
+EMAIL_PROVIDER=gmail-api
+GOOGLE_CLIENT_ID=<oauth client id>
+GOOGLE_CLIENT_SECRET=<oauth client secret -- secret manager only>
+GOOGLE_REFRESH_TOKEN=<one-time consent, scope gmail.send -- secret manager only>
+GMAIL_SENDER_EMAIL=<the Gmail/Workspace address that granted consent>
+GMAIL_SENDER_NAME=N K Lodha & Co
+# All GOOGLE_* / GMAIL_* values are server-only: never NEXT_PUBLIC_/VITE_, never logged, never committed.
+
+# SELF-HOSTED NODE ONLY (legacy, docs/email-delivery/index.md): EMAIL_PROVIDER=gmail-smtp
+# plus the SMTP_* variables below (Gmail SMTP + Google App Password). Not for Workers.
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=465
 SMTP_USER=<gmail address>

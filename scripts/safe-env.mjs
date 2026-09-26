@@ -29,7 +29,10 @@ export function applySafeProviderEnv(env) {
     ...env,
     ADAPTER_PROFILE: "mock",
     WHATSAPP_PROVIDER: "disabled",
+    EMAIL_PROVIDER: "",
     SMTP_APP_PASSWORD: "",
+    GOOGLE_CLIENT_SECRET: "",
+    GOOGLE_REFRESH_TOKEN: "",
     AISENSY_API_KEY: "",
   };
 }
@@ -42,6 +45,7 @@ export function describeProviderSafety(env) {
     adapterProfile: env.ADAPTER_PROFILE ?? "mock",
     whatsappProvider: env.WHATSAPP_PROVIDER ?? "disabled",
     smtpSecret: env.SMTP_APP_PASSWORD ? "set" : "blank",
+    gmailApiSecrets: env.GOOGLE_REFRESH_TOKEN || env.GOOGLE_CLIENT_SECRET ? "set" : "blank",
     aisensyKey: env.AISENSY_API_KEY ? "set" : "blank",
   };
 }

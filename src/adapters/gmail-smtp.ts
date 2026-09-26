@@ -1,4 +1,9 @@
 /**
+ * SELF-HOSTED NODE / LOCAL ONLY. Not for Cloudflare Workers: Nodemailer resolves
+ * the host to an IP and then opens TLS to the IP, which the Workers runtime
+ * rejects (verified in workerd), and src/adapters/index.ts refuses to select
+ * this adapter there. Hosted production uses ./gmail-api.ts (EMAIL_PROVIDER=gmail-api).
+ *
  * Real Gmail SMTP adapter (Google App Password auth, no OAuth -- see
  * docs/email-delivery/index.md). Implements the same `MessagingAdapter`
  * interface as the mock adapters (src/adapters/mock.ts) so no call site

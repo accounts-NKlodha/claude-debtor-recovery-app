@@ -28,7 +28,10 @@ Object.assign(process.env, {
   DATA_PROFILE: mode === "demo" ? "memory" : "supabase",
   ADAPTER_PROFILE: "mock",
   WHATSAPP_PROVIDER: "disabled",
+  EMAIL_PROVIDER: "",
   SMTP_APP_PASSWORD: "",
+  GOOGLE_CLIENT_SECRET: "",
+  GOOGLE_REFRESH_TOKEN: "",
   AISENSY_API_KEY: "",
 });
 process.env.NODE_ENV = mode === "preview" ? "production" : "development";
@@ -40,7 +43,7 @@ if (mode !== "demo") {
 }
 if (process.env.ADAPTER_PROFILE !== "mock") problems.push("ADAPTER_PROFILE not mock");
 if (process.env.WHATSAPP_PROVIDER !== "disabled") problems.push("WHATSAPP_PROVIDER not disabled");
-if (process.env.SMTP_APP_PASSWORD || process.env.AISENSY_API_KEY) problems.push("send secrets not blanked");
+if (process.env.SMTP_APP_PASSWORD || process.env.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_REFRESH_TOKEN || process.env.AISENSY_API_KEY) problems.push("send secrets not blanked");
 if (problems.length) {
   console.error("[uat] refusing to start:", problems.join("; "));
   process.exit(1);

@@ -33,6 +33,9 @@ Object.assign(process.env, {
   WHATSAPP_PROVIDER: emailOnly ? "disabled" : "aisensy",
 });
 if (emailOnly) process.env.AISENSY_API_KEY = "";
+// Local live UAT only: the app itself never infers a provider, so name one here
+// (override with EMAIL_PROVIDER=gmail-api to exercise the Worker path).
+process.env.EMAIL_PROVIDER ||= "gmail-smtp";
 process.env.NODE_ENV = "development";
 
 const need = [

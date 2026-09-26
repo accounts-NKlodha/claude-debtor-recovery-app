@@ -33,7 +33,7 @@ const safety = describeProviderSafety(env);
 
 console.log(
   `[safe-run] ${tool} ${args.join(" ")} | mode=${safety.mode} adapters=${safety.adapterProfile} ` +
-    `whatsapp=${safety.whatsappProvider} smtpSecret=${safety.smtpSecret} aisensyKey=${safety.aisensyKey}`,
+    `whatsapp=${safety.whatsappProvider} smtpSecret=${safety.smtpSecret} gmailApiSecrets=${safety.gmailApiSecrets} aisensyKey=${safety.aisensyKey}`,
 );
 
 if (process.env.SAFE_RUN_CHECK === "1") process.exit(0);

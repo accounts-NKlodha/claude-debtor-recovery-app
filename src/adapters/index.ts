@@ -24,6 +24,13 @@
  * WHATSAPP_PROVIDER=aisensy IS set fails closed inside the adapter itself
  * (src/lib/config/aisensy.ts) -- never a silent fallback to a fake success.
  *
+ * Which REAL email provider runs is chosen explicitly by EMAIL_PROVIDER:
+ *   gmail-api  -- Gmail REST API over HTTPS (hosted / Cloudflare Workers production)
+ *   gmail-smtp -- Nodemailer + App Password (self-hosted Node / local only; refused on Workers)
+ * It is never inferred from which credentials happen to be present. Unset or
+ * unknown fails closed (a permanent-failure adapter, never a mock, never a
+ * silent SMTP fallback).
+ *
  * Every other capability (gstPortal, msmePortal, ocr, ...) has no real
  * provider yet and stays mocked regardless of profile/environment.
  */
@@ -39,6 +46,7 @@ import type {
 } from "@/contract/adapters";
 import { isProductionRuntime } from "@/lib/config/production";
 import { gmailSmtp } from "./gmail-smtp";
+import { gmailApi } from "./gmail-api";
 import { aiSensyWhatsApp } from "./aisensy";
 import {
   mockCalendar,
@@ -85,12 +93,41 @@ export function isLiveWhatsAppConfigured(): boolean {
   return whatsappProvider === "aisensy";
 }
 
+/** Cloudflare Workers identify themselves this way; raw SMTP sockets do not work there. */
+function runsOnWorkers(): boolean {
+  return typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
+}
+
+function failClosedEmail(errorCode: string, why: string): MessagingAdapter {
+  return {
+    name: "email-misconfigured",
+    async send() {
+      return { outcome: "permanent_failure", providerRef: null, errorCode, evidenceRefs: [], nextAction: `${why} No message was sent. Do not retry automatically.` };
+    },
+    parseWebhook: () => null,
+  };
+}
+
+/** Exported for tests. Real email requires an explicit EMAIL_PROVIDER; see the header comment. */
+export function resolveEmailAdapter(): MessagingAdapter {
+  const live = isProductionRuntime() || provider === "live";
+  if (!live) return mockGmail;
+  const chosen = (process.env.EMAIL_PROVIDER ?? "").trim();
+  if (chosen === "gmail-api") return gmailApi;
+  if (chosen === "gmail-smtp") {
+    return runsOnWorkers()
+      ? failClosedEmail("EMAIL_SMTP_NOT_SUPPORTED_ON_WORKERS", "Gmail SMTP cannot run on Cloudflare Workers; set EMAIL_PROVIDER=gmail-api.")
+      : gmailSmtp;
+  }
+  if (chosen === "") return failClosedEmail("EMAIL_PROVIDER_NOT_SET", "EMAIL_PROVIDER must be set to gmail-api or gmail-smtp for real email.");
+  return failClosedEmail("EMAIL_PROVIDER_UNKNOWN", "EMAIL_PROVIDER has an unsupported value.");
+}
+
 export function getAdapters(): AdapterSet {
-  const useLiveEmail = isProductionRuntime() || provider === "live";
   const useLiveWhatsApp = whatsappProvider === "aisensy";
   return {
     ...mockSet,
-    email: useLiveEmail ? gmailSmtp : mockGmail,
+    email: resolveEmailAdapter(),
     whatsapp: useLiveWhatsApp ? aiSensyWhatsApp : mockWhatsApp,
   };
 }

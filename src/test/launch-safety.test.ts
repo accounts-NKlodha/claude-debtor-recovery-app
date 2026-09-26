@@ -23,6 +23,9 @@ const liveEnv = {
   WHATSAPP_PROVIDER: "aisensy",
   SMTP_APP_PASSWORD: FAKE_SMTP,
   AISENSY_API_KEY: FAKE_AISENSY,
+  EMAIL_PROVIDER: "gmail-api",
+  GOOGLE_CLIENT_SECRET: "fake-google-client-secret",
+  GOOGLE_REFRESH_TOKEN: "fake-google-refresh-token",
   NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
   NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon",
   SMTP_HOST: "smtp.gmail.com",
@@ -41,7 +44,10 @@ const run = (script: string, args: string[], env: Record<string, string>) =>
 describe("applySafeProviderEnv", () => {
   it("forces mock/disabled and blanks the send secrets by default", () => {
     const out = applySafeProviderEnv(liveEnv);
-    expect(out).toMatchObject({ ADAPTER_PROFILE: "mock", WHATSAPP_PROVIDER: "disabled", SMTP_APP_PASSWORD: "", AISENSY_API_KEY: "" });
+    expect(out).toMatchObject({
+      ADAPTER_PROFILE: "mock", WHATSAPP_PROVIDER: "disabled", EMAIL_PROVIDER: "",
+      SMTP_APP_PASSWORD: "", GOOGLE_CLIENT_SECRET: "", GOOGLE_REFRESH_TOKEN: "", AISENSY_API_KEY: "",
+    });
     expect(liveEnv.SMTP_APP_PASSWORD).toBe(FAKE_SMTP); // input not mutated
   });
 
@@ -82,7 +88,8 @@ describe("committed npm scripts are safe by default", () => {
   ])("npm run %s resolves to SAFE providers even with live credentials in the environment", (_name, tool, args) => {
     const r = run("safe-run.mjs", [tool, ...args], liveEnv);
     expect(r.status).toBe(0);
-    expect(r.stdout).toMatch(/mode=SAFE adapters=mock whatsapp=disabled smtpSecret=blank aisensyKey=blank/);
+    expect(r.stdout).toMatch(/mode=SAFE adapters=mock whatsapp=disabled smtpSecret=blank gmailApiSecrets=blank aisensyKey=blank/);
+    expect(r.stdout + r.stderr).not.toContain("fake-google");
     // and never prints a secret value
     expect(r.stdout + r.stderr).not.toContain(FAKE_SMTP);
     expect(r.stdout + r.stderr).not.toContain(FAKE_AISENSY);
