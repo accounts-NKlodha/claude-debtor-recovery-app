@@ -110,60 +110,81 @@ export function buildReminderEmail(input: ReminderEmailInput): ReminderEmail {
   function renderHtml(): string {
     const e = escapeHtml;
     const FONT = "font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+    const NAVY = "#1f3a6e";
+    const INK = "#14213d";
+    const MUTED = "#5f6b7e";
+    const RULE = "#dfe5ef";
+
+    // Invoice rows: "Outstanding amount" is the one strong figure; the rest are quiet.
     const summary = invoiceRows
-      .map(
-        (r, i) =>
-          `<tr><td style="${FONT}font-size:14px;line-height:20px;color:#5b6472;padding:10px 0;${i ? "border-top:1px solid #e5e8ee;" : ""}">${e(r.label)}</td>` +
-          `<td align="right" style="${FONT}font-size:14px;line-height:20px;color:#1a2233;font-weight:600;padding:10px 0;${i ? "border-top:1px solid #e5e8ee;" : ""}">${e(r.value)}</td></tr>`,
-      )
+      .map((r, i) => {
+        const strong = r.label === "Outstanding amount";
+        const top = i ? `border-top:1px solid ${RULE};` : "";
+        return strong
+          ? `<tr><td bgcolor="#eef3fb" style="${FONT}background-color:#eef3fb;font-size:14px;line-height:22px;color:${NAVY};font-weight:600;padding:14px 16px;${top}">${e(r.label)}</td>` +
+              `<td bgcolor="#eef3fb" align="right" style="${FONT}background-color:#eef3fb;font-size:22px;line-height:28px;color:${NAVY};font-weight:700;padding:14px 16px;${top}">${e(r.value)}</td></tr>`
+          : `<tr><td style="${FONT}font-size:14px;line-height:20px;color:${MUTED};padding:11px 16px;${top}">${e(r.label)}</td>` +
+              `<td align="right" style="${FONT}font-size:14px;line-height:20px;color:${INK};font-weight:600;padding:11px 16px;${top}">${e(r.value)}</td></tr>`;
+      })
       .join("");
+
     const payment = paymentRows.length
       ? `<tr><td style="padding:0 32px 24px 32px;">` +
-        `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f6fa;border:1px solid #e5e8ee;border-radius:8px;">` +
-        `<tr><td style="${FONT}padding:16px 20px;">` +
-        `<div style="font-size:12px;line-height:16px;letter-spacing:0.6px;text-transform:uppercase;color:#5b6472;font-weight:600;">Pay via UPI</div>` +
+        `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ${NAVY};border-radius:8px;">` +
+        `<tr><td style="${FONT}padding:14px 18px 6px 18px;font-size:12px;line-height:16px;letter-spacing:0.8px;text-transform:uppercase;color:${NAVY};font-weight:700;">Pay via UPI</td></tr>` +
         paymentRows
           .map(
-            (r) =>
-              `<div style="font-size:14px;line-height:22px;color:#1a2233;margin-top:6px;"><span style="color:#5b6472;">${e(r.label)}:</span> <strong>${e(r.value)}</strong></div>`,
+            (r, i) =>
+              `<tr><td style="${FONT}padding:${i === paymentRows.length - 1 ? "2px 18px 16px" : "2px 18px"} 18px;font-size:15px;line-height:24px;color:${INK};"><span style="color:${MUTED};">${e(r.label)}:</span>&nbsp;<strong>${e(r.value)}</strong></td></tr>`,
           )
           .join("") +
-        `</td></tr></table></td></tr>`
+        `</table></td></tr>`
       : "";
+
     const other = otherNote
-      ? `<tr><td style="${FONT}padding:0 32px 20px 32px;font-size:13px;line-height:20px;color:#5b6472;">${e(otherNote)}</td></tr>`
+      ? `<tr><td style="${FONT}padding:0 32px 20px 32px;font-size:13px;line-height:20px;color:${MUTED};">${e(otherNote)}</td></tr>`
       : "";
+
+    // CTA: same sentence(s) as the plain-text body, split so the reassurance reads on its own line.
+    const [ctaLead, ...ctaRest] = CTA.split(/(?<=\.)\s+/);
+    const cta =
+      `<tr><td style="padding:0 32px 28px 32px;">` +
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>` +
+      `<td width="4" bgcolor="${NAVY}" style="background-color:${NAVY};font-size:0;line-height:0;">&nbsp;</td>` +
+      `<td bgcolor="#f5f8fd" style="${FONT}background-color:#f5f8fd;padding:16px 20px;font-size:15px;line-height:24px;color:${INK};">` +
+      `<p style="margin:0 0 6px 0;font-weight:600;">${e(ctaLead)}</p>` +
+      (ctaRest.length ? `<p style="margin:0;color:#334155;">${e(ctaRest.join(" "))}</p>` : "") +
+      `</td></tr></table></td></tr>`;
 
     return (
       `<!DOCTYPE html>` +
       `<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
       `<meta name="x-apple-disable-message-reformatting"><title>${e(subject)}</title></head>` +
-      `<body style="margin:0;padding:0;background-color:#eef1f6;">` +
+      `<body style="margin:0;padding:0;background-color:#e9eef6;">` +
       `<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${e(`Payment reminder for invoice ${invoiceNumber || ""} — ${rupees(input.outstandingPaise)} outstanding`)}</div>` +
-      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#eef1f6;"><tr><td align="center" style="padding:24px 12px;">` +
-      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;background-color:#ffffff;border:1px solid #e0e4eb;border-radius:10px;">` +
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#e9eef6" style="background-color:#e9eef6;"><tr><td align="center" style="padding:28px 12px;">` +
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="max-width:600px;background-color:#ffffff;border:1px solid ${RULE};border-top:4px solid ${NAVY};border-radius:10px;">` +
       // header
-      `<tr><td style="background-color:#1f2a44;border-radius:10px 10px 0 0;padding:24px 32px;">` +
-      `<div style="${FONT}font-size:20px;line-height:26px;font-weight:700;color:#ffffff;">${e(FIRM)}</div>` +
-      `<div style="${FONT}font-size:13px;line-height:18px;color:#c9d1e3;margin-top:2px;">Payment Reminder</div></td></tr>` +
+      `<tr><td bgcolor="${NAVY}" style="background-color:${NAVY};border-radius:6px 6px 0 0;padding:26px 32px 22px 32px;">` +
+      `<div style="${FONT}font-size:24px;line-height:30px;font-weight:700;letter-spacing:0.2px;color:#ffffff;">${e(FIRM)}</div>` +
+      `<div style="${FONT}font-size:13px;line-height:18px;letter-spacing:1px;text-transform:uppercase;color:#b9c6e2;margin-top:4px;">Payment Reminder</div></td></tr>` +
       // greeting + intro
-      `<tr><td style="${FONT}padding:28px 32px 8px 32px;font-size:15px;line-height:24px;color:#1a2233;">` +
+      `<tr><td style="${FONT}padding:30px 32px 6px 32px;font-size:15px;line-height:24px;color:${INK};">` +
       `<p style="margin:0 0 12px 0;">Dear ${e(debtor)},</p>` +
       `<p style="margin:0;">This is a payment reminder on behalf of <strong>${e(creditor)}</strong>.</p></td></tr>` +
       // invoice summary
-      `<tr><td style="padding:16px 32px 20px 32px;">` +
-      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e5e8ee;border-radius:8px;">` +
-      `<tr><td colspan="2" style="${FONT}background-color:#f4f6fa;border-radius:8px 8px 0 0;padding:10px 16px;font-size:12px;line-height:16px;letter-spacing:0.6px;text-transform:uppercase;color:#5b6472;font-weight:600;">Invoice summary</td></tr>` +
-      `<tr><td colspan="2" style="padding:0 16px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${summary}</table></td></tr>` +
+      `<tr><td style="padding:18px 32px 22px 32px;">` +
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ${RULE};border-radius:8px;">` +
+      `<tr><td colspan="2" style="${FONT}border-bottom:1px solid ${RULE};padding:11px 16px;font-size:12px;line-height:16px;letter-spacing:0.8px;text-transform:uppercase;color:${NAVY};font-weight:700;">Invoice summary</td></tr>` +
+      summary +
       `</table></td></tr>` +
       other +
       payment +
-      // CTA
-      `<tr><td style="${FONT}padding:0 32px 28px 32px;font-size:15px;line-height:24px;color:#1a2233;">${e(CTA)}</td></tr>` +
+      cta +
       // footer
-      `<tr><td style="${FONT}background-color:#f4f6fa;border-top:1px solid #e5e8ee;border-radius:0 0 10px 10px;padding:20px 32px;font-size:13px;line-height:20px;color:#5b6472;">` +
-      `<div style="color:#1a2233;font-weight:600;">${e(FIRM)}</div><div>Debtor Recovery</div>` +
-      `<div style="margin-top:10px;font-size:12px;">${e(DISCLAIMER)}</div></td></tr>` +
+      `<tr><td style="${FONT}border-top:1px solid ${RULE};padding:20px 32px 24px 32px;font-size:13px;line-height:20px;color:#7a8597;">` +
+      `<div style="color:#4a5568;font-weight:600;">${e(FIRM)}</div><div>Debtor Recovery</div>` +
+      `<div style="margin-top:10px;font-size:12px;color:#8a94a6;">${e(DISCLAIMER)}</div></td></tr>` +
       `</table></td></tr></table></body></html>`
     );
   }

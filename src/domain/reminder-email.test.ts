@@ -93,6 +93,46 @@ describe("buildReminderEmail", () => {
   });
 });
 
+describe("visual polish (still email-client-safe)", () => {
+  const html = buildReminderEmail(base).html;
+
+  it("has a navy accent: top border plus a navy header carrying the firm name and subtitle", () => {
+    expect(html).toContain("border-top:4px solid #1f3a6e");
+    expect(html).toMatch(/bgcolor="#1f3a6e"[^>]*>[\s\S]*N K Lodha &amp; Co[\s\S]*Payment Reminder/);
+  });
+
+  it("makes Outstanding amount the single strongest figure", () => {
+    const strong = html.match(/font-size:22px/g) ?? [];
+    expect(strong).toHaveLength(1);
+    expect(html).toMatch(/Outstanding amount<\/td><td[^>]*font-size:22px[^>]*>₹1,180</);
+    // no alarm styling
+    expect(html).not.toMatch(/#(?:f00|ff0000|dc2626|ef4444|b91c1c)/i);
+  });
+
+  it("CTA is a distinct block with the payment reassurance on its own line", () => {
+    expect(html).toContain("Please arrange payment at your earliest convenience.");
+    expect(html).toMatch(/<p[^>]*>If payment has already been made, or if you need any clarification, simply reply to this email\.<\/p>/);
+    expect(html).toContain('width="4" bgcolor="#1f3a6e"');
+  });
+
+  it("uses a bordered payment box only when payment details exist, leaving no empty space otherwise", () => {
+    expect(html).toContain("border:1px solid #1f3a6e");
+    const without = buildReminderEmail({ ...base, upiId: null, upiPayeeName: null }).html;
+    expect(without).not.toContain("Pay via UPI");
+    expect(without).not.toContain("border:1px solid #1f3a6e");
+  });
+
+  it("stays deliverability-safe: no gradients, shadows, images, external assets or scripts", () => {
+    expect(html).not.toMatch(/gradient|box-shadow|<img|<script|<link|<style|@import|url\(|https?:\/\/|javascript:/i);
+    expect(html).toContain("max-width:600px");
+  });
+
+  it("footer keeps firm name, Debtor Recovery and the automated-reminder disclaimer", () => {
+    expect(html).toContain("Debtor Recovery");
+    expect(html).toContain("This is an automated payment reminder.");
+  });
+});
+
 describe("HTML safety", () => {
   const hostile = buildReminderEmail({
     creditorName: `<script>alert("c")</script> & Co`,
