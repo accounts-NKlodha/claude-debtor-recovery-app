@@ -9,7 +9,9 @@
  * Only exists on the TanStack port branch; src/lib/auth/session.ts (Next)
  * is untouched.
  */
+import { getCookies, getRequest } from "@tanstack/react-start/server";
 import { createClient } from "@/lib/supabase/tanstack-server";
+import { resolveRepoMode } from "@/server/repo-mode";
 import type { AppUserRow, UserOrganisationRow } from "@/lib/supabase/types";
 import {
   actorAttribution,
@@ -37,7 +39,7 @@ import { UnauthenticatedError, type AuthContext, type MutationActor } from "./ty
  * unaffected and keeps creating its own client from request cookies as
  * before.
  */
-export async function getAuthContext(
+async function resolveAuthContextUncached(
   existingClient?: Awaited<ReturnType<typeof createClient>>,
 ): Promise<AuthContext | null> {
   let supabase: Awaited<ReturnType<typeof createClient>>;
@@ -74,24 +76,97 @@ export async function getAuthContext(
   return resolveAuthContext(raw);
 }
 
-/** Mirrors src/lib/auth/session.ts's resolveClientOrganisationId exactly. */
-export async function resolveClientOrganisationId(fallbackOrganisations: { id: string }[]): Promise<string> {
+/**
+ * Request-scoped memoization of the (network) session validation. Keyed on
+ * the incoming Request object, so a result can NEVER outlive or cross the
+ * request it was computed for -- nothing is cached across requests, and a
+ * revoked session is re-checked against Supabase Auth on every new request.
+ * Calls that pass their own client (sign-in) are never cached.
+ */
+const requestAuthCache = new WeakMap<object, Promise<AuthContext | null>>();
+
+function currentRequestKey(): object | null {
+  try {
+    return getRequest();
+  } catch {
+    return null; // outside a Start request (e.g. some tests): no memoization
+  }
+}
+
+/** Sign-in/sign-out change who the request is: drop this request's memo. */
+export function clearRequestAuthCache(): void {
+  const key = currentRequestKey();
+  if (key) requestAuthCache.delete(key);
+}
+
+export async function getAuthContext(
+  existingClient?: Awaited<ReturnType<typeof createClient>>,
+): Promise<AuthContext | null> {
+  if (existingClient) return resolveAuthContextUncached(existingClient);
+  const key = currentRequestKey();
+  if (!key) return resolveAuthContextUncached();
+  const cached = requestAuthCache.get(key);
+  if (cached) return cached;
+  const pending = resolveAuthContextUncached();
+  requestAuthCache.set(key, pending);
+  pending.catch(() => requestAuthCache.delete(key));
+  return pending;
+}
+
+const SESSION_COOKIE = /^sb-.+-auth-token(\.\d+)?$/;
+
+/** True when the request carries a Supabase session cookie (valid or not). */
+export function requestCarriesSessionCookie(): boolean {
+  try {
+    return Object.keys(getCookies()).some((name) => SESSION_COOKIE.test(name));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The non-production demo actor (in-memory demo data) is only ever offered
+ * when ALL hold: not production, the data layer is the in-memory repository,
+ * and the request presents no session cookie at all. A presented-but-invalid
+ * (revoked/replayed/expired) session, or any request against real Supabase
+ * data, must fail closed instead of degrading to a demo identity that would
+ * then read data with whatever JWT the cookie still carries.
+ */
+export function demoFallbackAllowed(): boolean {
+  return !isProduction() && resolveRepoMode() === "memory" && !requestCarriesSessionCookie();
+}
+
+/**
+ * Resolves the organisation a client request is scoped to, authenticating
+ * FIRST. `loadFallbackOrganisations` is lazy on purpose: it is only invoked
+ * on the demo-data fallback path (no session at all, in-memory demo data,
+ * not production), so a revoked/invalid session never triggers a data query.
+ */
+export async function resolveClientOrganisationId(
+  loadFallbackOrganisations: () => Promise<{ id: string }[]>,
+): Promise<string> {
   const actor = await getAuthContext();
   if (actor?.kind === "client") return actor.organisationId;
 
-  if (isProduction()) throw new UnauthenticatedError("Client session required");
+  // A staff/admin session is not a client session in any environment, and
+  // the demo fallback exists only for "no session at all" on demo data.
+  if (actor || !demoFallbackAllowed()) throw new UnauthenticatedError("Client session required");
 
-  const fallback = fallbackOrganisations[0];
+  const fallback = (await loadFallbackOrganisations())[0];
   if (!fallback) throw new UnauthenticatedError("No organisation available for demo client session");
   return fallback.id;
 }
 
 export async function requireStaffSession() {
-  return requireStaffContext(await getAuthContext());
+  const actor = await getAuthContext();
+  if (!actor && !demoFallbackAllowed()) throw new UnauthenticatedError();
+  return requireStaffContext(actor);
 }
 
 export async function requireAdminSession() {
-  return requireAdminContext(await getAuthContext());
+  const actor = await getAuthContext();
+  if (!actor && !demoFallbackAllowed()) throw new UnauthenticatedError();
+  return requireAdminContext(actor);
 }
 
 export async function requireClientSession(organisationId: string) {

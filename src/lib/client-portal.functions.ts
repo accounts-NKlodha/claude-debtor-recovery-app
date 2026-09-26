@@ -71,15 +71,18 @@ export async function toClientCaseViews(
   }));
 }
 
-async function resolveClientOrg(repo: Repository) {
-  const orgs = await repo.listOrganisations();
-  const organisationId = await resolveClientOrganisationId(orgs);
-  return orgs.find((o) => o.id === organisationId) ?? orgs[0];
+/** Authenticates first (no data query on a rejected session), then loads the
+ * session organisation. */
+async function resolveClientOrg() {
+  const organisationId = await resolveClientOrganisationId(async () => (await getRepo()).listOrganisations());
+  const repo = await getRepo();
+  const org = await repo.getOrg(organisationId);
+  if (!org) throw new Error("Organisation not available");
+  return { repo, org };
 }
 
 export const getClientOverviewData = createServerFn({ method: "GET" }).handler(async () => {
-  const repo = await getRepo();
-  const org = await resolveClientOrg(repo);
+  const { repo, org } = await resolveClientOrg();
   const [overview, cases, trend, stageFunnel] = await Promise.all([
     repo.clientOverview(org.id),
     repo.listCasesForOrg(org.id),
@@ -96,8 +99,7 @@ export const getClientOverviewData = createServerFn({ method: "GET" }).handler(a
 });
 
 export const getClientCasesData = createServerFn({ method: "GET" }).handler(async () => {
-  const repo = await getRepo();
-  const org = await resolveClientOrg(repo);
+  const { repo, org } = await resolveClientOrg();
   const cases = await repo.listCasesForOrg(org.id);
   return { org: { legalEntityName: org.legalEntityName }, cases: await toClientCaseViews(repo, cases) };
 });

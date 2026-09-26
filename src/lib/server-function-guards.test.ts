@@ -12,8 +12,16 @@ type Scenario = {
   user: { id: string } | null;
   appUser: { role: "staff" | "admin" | "client"; email: string | null; display_name: string } | null;
   orgIds: string[];
+  cookies: Record<string, string>;
+  request: object;
+  getUserCalls: number;
 };
-const scenario: Scenario = { user: null, appUser: null, orgIds: [] };
+const scenario: Scenario = { user: null, appUser: null, orgIds: [], cookies: {}, request: {}, getUserCalls: 0 };
+
+vi.mock("@tanstack/react-start/server", () => ({
+  getCookies: () => scenario.cookies,
+  getRequest: () => scenario.request,
+}));
 
 vi.mock("@tanstack/react-start", () => ({
   createServerFn: () => {
@@ -27,7 +35,12 @@ vi.mock("@tanstack/react-start", () => ({
 
 vi.mock("@/lib/supabase/tanstack-server", () => ({
   createClient: async () => ({
-    auth: { getUser: async () => ({ data: { user: scenario.user }, error: scenario.user ? null : new Error("no session") }) },
+    auth: {
+      getUser: async () => {
+        scenario.getUserCalls += 1;
+        return { data: { user: scenario.user }, error: scenario.user ? null : new Error("session_not_found") };
+      },
+    },
     from: (table: string) => ({
       select: () => ({
         eq: () => ({
@@ -65,10 +78,15 @@ import { getLandingRedirect } from "./root-landing.functions";
 
 const call = (fn: unknown, arg?: unknown) => (fn as (a?: unknown) => Promise<unknown>)(arg);
 
-const asStaff = () => Object.assign(scenario, { user: { id: "s1" }, appUser: { role: "staff", email: "s@x.in", display_name: "Staff" }, orgIds: [] });
-const asAdmin = () => Object.assign(scenario, { user: { id: "a1" }, appUser: { role: "admin", email: "a@x.in", display_name: "Admin" }, orgIds: [] });
-const asClient = (orgId: string) => Object.assign(scenario, { user: { id: "c1" }, appUser: { role: "client", email: null, display_name: "Client" }, orgIds: [orgId] });
-const asNobody = () => Object.assign(scenario, { user: null, appUser: null, orgIds: [] });
+const SESSION_COOKIES = { "sb-projectref-auth-token": "opaque" };
+const asStaff = () => Object.assign(scenario, { user: { id: "s1" }, appUser: { role: "staff", email: "s@x.in", display_name: "Staff" }, orgIds: [], cookies: SESSION_COOKIES, request: {} });
+const asAdmin = () => Object.assign(scenario, { user: { id: "a1" }, appUser: { role: "admin", email: "a@x.in", display_name: "Admin" }, orgIds: [], cookies: SESSION_COOKIES, request: {} });
+const asClient = (orgId: string) => Object.assign(scenario, { user: { id: "c1" }, appUser: { role: "client", email: null, display_name: "Client" }, orgIds: [orgId], cookies: SESSION_COOKIES, request: {} });
+const asNobody = () => Object.assign(scenario, { user: null, appUser: null, orgIds: [], cookies: {}, request: {} });
+/** A logged-out user replaying an old cookie: the cookie is present but Auth says the session is gone. */
+const asRevoked = () => Object.assign(scenario, { user: null, appUser: null, orgIds: [], cookies: SESSION_COOKIES, request: {} });
+/** Authenticated with Supabase (public sign-up) but never provisioned as an app user. */
+const asUnprovisioned = () => Object.assign(scenario, { user: { id: "u9" }, appUser: null, orgIds: [], cookies: SESSION_COOKIES, request: {} });
 
 let orgA: string;
 let orgB: string;
@@ -77,6 +95,8 @@ let otherCaseId: string;
 
 beforeEach(async () => {
   vi.unstubAllEnvs();
+  scenario.request = {}; // a fresh request per test (the auth memo is per request)
+  scenario.getUserCalls = 0;
   getRepo.mockClear();
   const orgs = await repo.listOrganisations();
   [orgA, orgB] = [orgs[0].id, orgs[1].id];
@@ -231,5 +251,86 @@ describe("client-safe read server functions", () => {
     expect(await call(getLandingRedirect)).toEqual({ to: "/client" });
     expect(await call(getNewClientPageAccess)).toEqual({ isAdmin: false });
     expect(getRepo).not.toHaveBeenCalled();
+  });
+});
+
+describe("revoked / unprovisioned sessions fail closed (every environment)", () => {
+  const revokedCases: Array<[string, () => Promise<unknown>]> = [
+    ...INTERNAL_READS,
+    ["getClientCasesData", () => call(getClientCasesData)],
+    ["getClientOverviewData", () => call(getClientOverviewData)],
+  ];
+
+  describe.each(revokedCases)("%s", (_name, run) => {
+    it.each([
+      ["development", "development"],
+      ["production", "production"],
+    ])("rejects a replayed revoked cookie in %s before any data is loaded", async (_l, env) => {
+      asRevoked();
+      vi.stubEnv("NODE_ENV", env);
+      await expect(run()).rejects.toThrow(/Authentication required|Client session required/);
+      expect(getRepo).not.toHaveBeenCalled();
+    });
+
+    it("rejects an authenticated-but-unprovisioned user (public sign-up account)", async () => {
+      asUnprovisioned();
+      vi.stubEnv("NODE_ENV", "production");
+      await expect(run()).rejects.toThrow(/Authentication required|Client session required/);
+      expect(getRepo).not.toHaveBeenCalled();
+    });
+  });
+
+  it("does not offer the demo actor against real Supabase data, even with no session in development", async () => {
+    asNobody();
+    vi.stubEnv("DATA_PROFILE", "supabase");
+    await expect(call(getDashboardData)).rejects.toThrow("Authentication required");
+    await expect(call(getClientCasesData)).rejects.toThrow("Client session required");
+    expect(getRepo).not.toHaveBeenCalled();
+  });
+
+  it("never lets a presented-but-invalid session degrade to the demo actor on demo data", async () => {
+    asRevoked();
+    await expect(call(getDashboardData)).rejects.toThrow("Authentication required");
+  });
+
+  it("does not let a staff session act as a client in development either", async () => {
+    asStaff();
+    await expect(call(getClientCasesData)).rejects.toThrow("Client session required");
+  });
+
+  it("surface guards send a revoked or session-less request to /sign-in in every environment", async () => {
+    asRevoked();
+    expect(await call(getInternalShellData)).toEqual({ kind: "redirect", to: "/sign-in" });
+    expect(await call(getClientShellData)).toEqual({ kind: "redirect", to: "/sign-in" });
+    expect(await call(getLandingRedirect)).toEqual({ to: "/sign-in" });
+    expect(await call(getNewClientPageAccess)).toEqual({ isAdmin: false });
+    expect(getRepo).not.toHaveBeenCalled();
+  });
+});
+
+describe("request-scoped session validation", () => {
+  it("validates the session once per request, however many guarded reads it makes", async () => {
+    asStaff();
+    await call(getDashboardData);
+    await call(getCasesListData);
+    await call(getTodayData);
+    expect(scenario.getUserCalls).toBe(1);
+  });
+
+  it("re-validates on every new request -- nothing is cached across requests", async () => {
+    asStaff();
+    await call(getDashboardData);
+    scenario.request = {}; // next HTTP request
+    await call(getDashboardData);
+    expect(scenario.getUserCalls).toBe(2);
+  });
+
+  it("a session revoked between two requests is caught by the second request", async () => {
+    asStaff();
+    await expect(call(getDashboardData)).resolves.toBeDefined();
+    scenario.request = {};
+    Object.assign(scenario, { user: null, appUser: null }); // logout elsewhere: cookie replayed
+    vi.stubEnv("NODE_ENV", "production");
+    await expect(call(getDashboardData)).rejects.toThrow("Authentication required");
   });
 });

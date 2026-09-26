@@ -26,7 +26,7 @@ const MSME_STAGES = [
 ] as const satisfies readonly MsmeStage[];
 
 export interface SaveMsmeStageState {
-  result: { resumeToken: string | null } | null;
+  result: { resumeToken: string | null; version: number } | null;
   error: string | null;
 }
 
@@ -61,7 +61,9 @@ export function validateMsmeStageInput(
  * here rather than a JSON string in FormData, since there's no FormData
  * boundary to cross. */
 export const saveMsmeStageFn = createServerFn({ method: "POST" })
-  .validator((data: unknown) => data as { caseId: string; stage: unknown; payload: unknown })
+  .validator(
+    (data: unknown) => data as { caseId: string; stage: unknown; payload: unknown; expectedVersion?: number | null },
+  )
   .handler(async ({ data }): Promise<SaveMsmeStageState> => {
     const validated = validateMsmeStageInput(data.caseId, data.stage, data.payload);
     if (!validated.ok) return { result: null, error: validated.error };
@@ -76,7 +78,13 @@ export const saveMsmeStageFn = createServerFn({ method: "POST" })
 
     try {
       const repo = await getRepo();
-      const result = await repo.saveMsmeStage(data.caseId, stage, payload, actor);
+      const result = await repo.saveMsmeStage(
+        data.caseId,
+        stage,
+        payload,
+        actor,
+        typeof data.expectedVersion === "number" ? data.expectedVersion : null,
+      );
       return { result, error: null };
     } catch (e: unknown) {
       return { result: null, error: e instanceof Error ? e.message : "Failed to save this stage" };

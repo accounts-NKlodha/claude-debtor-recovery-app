@@ -26,6 +26,8 @@ import {
   type PrepareGstNotificationState,
 } from "@/lib/gst.functions";
 import { cn, formatInr } from "@/lib/utils";
+import type { GstEvidence } from "@/domain/gst-evidence";
+import { deriveGstSession, gstEvidenceRows, type GstLocalSession } from "@/domain/gst-panel-state";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,6 +52,11 @@ export interface GstPack {
   clientName: string;
   principalOutstanding: number;
   invoiceCount: number;
+  /** Case status / next scheduled time, and the durably recorded GST evidence
+   * (session opened, filing + reference) the panel hydrates from on load. */
+  caseStatus: string;
+  nextScheduledAt: string | null;
+  evidence: GstEvidence;
 }
 
 function Counter({ n, max }: { n: number; max: number }) {
@@ -163,7 +170,7 @@ export function GstScreen({ pack }: { pack: GstPack }) {
       ? "Filing capture did not return a reference -- check Audit / Security for the failure reason."
       : null);
 
-  const session: "idle" | "opening" | "open" | "sent" | "filing" = capturePending
+  const localSession: GstLocalSession = capturePending
     ? "filing"
     : captchaConfirmed && !captureBusinessFailure
       ? "sent"
@@ -172,6 +179,9 @@ export function GstScreen({ pack }: { pack: GstPack }) {
         : preparePending || openSessionPending
           ? "opening"
           : "idle";
+  // What is durably recorded wins over the blank slate a reload starts from.
+  const session = deriveGstSession({ local: localSession, localFilingSucceeded: filingSucceeded, evidence: pack.evidence });
+  const filed = session === "filed";
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
@@ -295,13 +305,13 @@ export function GstScreen({ pack }: { pack: GstPack }) {
               </Button>
               <Badge
                 tone={
-                  session === "sent" || session === "filing"
+                  session === "sent" || session === "filing" || session === "filed"
                     ? "success"
                     : session === "open" || session === "opening"
                       ? "warning"
                       : "neutral"
                 }
-                icon={session === "sent" || session === "filing" ? <CircleCheck /> : undefined}
+                icon={session === "sent" || session === "filing" || session === "filed" ? <CircleCheck /> : undefined}
               >
                 {session === "idle"
                   ? "Not started"
@@ -309,7 +319,9 @@ export function GstScreen({ pack }: { pack: GstPack }) {
                     ? "Preparing pack…"
                     : session === "open"
                       ? "Session open — human action required"
-                      : "Submitted by staff"}
+                      : session === "filed"
+                        ? "Filed — evidence recorded"
+                        : "Submitted by staff"}
               </Badge>
             </form>
 
@@ -317,6 +329,30 @@ export function GstScreen({ pack }: { pack: GstPack }) {
               <p className="text-xs text-muted-foreground">
                 Session: <span className="font-mono">{sessionUrl}</span>
               </p>
+            ) : session === "open" && pack.evidence.sessionOpenedAt ? (
+              <p className="text-xs text-muted-foreground">
+                A portal session was already opened for this case. The link isn&apos;t stored — continue on the portal
+                you have open, then confirm below.
+              </p>
+            ) : null}
+
+            {filed ? (
+              <div className="flex flex-col gap-1 rounded-md border border-success/30 bg-success-bg/40 px-3 py-2 text-xs">
+                <p className="font-medium text-success">
+                  Filing recorded{pack.evidence.referenceNumber ? <> — reference <span className="font-mono">{pack.evidence.referenceNumber}</span></> : null}
+                </p>
+                {pack.evidence.filingCount > 1 ? (
+                  <p className="text-warning">
+                    {pack.evidence.filingCount} filings were recorded for this case — check Audit / Security for the duplicate.
+                  </p>
+                ) : null}
+                {pack.caseStatus !== "gst_notification_filed" ? (
+                  <p className="text-muted-foreground">
+                    The case status is still &quot;{pack.caseStatus.replace(/_/g, " ")}&quot; — the filing evidence is
+                    recorded, but the case did not advance to &quot;GST notification filed&quot;.
+                  </p>
+                ) : null}
+              </div>
             ) : null}
 
             {error ? (
@@ -358,25 +394,15 @@ export function GstScreen({ pack }: { pack: GstPack }) {
           </CardHeader>
           <CardContent className="pt-0 text-sm">
             <ul className="divide-y divide-border">
-              {[
-                { label: "Manifest", value: valid ? "Locked" : "Pending field fixes", done: valid },
-                {
-                  label: "Attachments",
-                  value: `${attachments.length} verified`,
-                  done: attachments.length > 0,
-                },
-                {
-                  label: "Assisted session",
-                  value: session === "idle" ? "Not opened" : session === "opening" ? "Preparing…" : "Opened",
-                  done: session !== "idle" && session !== "opening",
-                },
-                {
-                  label: "Reference / screenshot",
-                  value: session === "sent" || session === "filing" ? (ref || "Awaiting entry") : "Pending",
-                  done: (session === "sent" || session === "filing") && Boolean(ref),
-                },
-                { label: "7-day timer", value: session === "filing" ? "Starting…" : "Not started", done: false },
-              ].map((row) => (
+              {gstEvidenceRows({
+                session,
+                manifestValid: valid,
+                attachmentCount: attachments.length,
+                typedReference: ref,
+                evidence: pack.evidence,
+                caseStatus: pack.caseStatus,
+                nextScheduledAt: pack.nextScheduledAt,
+              }).map((row) => (
                 <li key={row.label} className="flex items-center justify-between gap-3 py-2">
                   <span className="flex items-center gap-2 text-xs text-muted-foreground">
                     <span

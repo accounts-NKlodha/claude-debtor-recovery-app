@@ -18,6 +18,7 @@
  * repository seam.
  */
 
+import { buildGstFiledReason, GST_EVIDENCE_ACTIONS, reconstructGstEvidence, type GstEvidence } from "@/domain/gst-evidence";
 import { estimateSuccessFee } from "@/domain/fees";
 import { applyConfirmedPayment } from "@/domain/apply-payment";
 import {
@@ -72,10 +73,19 @@ import {
   type ManualInvoiceInput,
 } from "@/contract/schemas";
 import type { MsmeStage } from "@/contract/adapters";
+import {
+  MSME_CONFLICT_MESSAGE,
+  MSME_LOCKED_MESSAGE,
+  MSME_STAGES,
+  MsmeDraftError,
+  type MsmeDraft,
+  type MsmeDraftStage,
+} from "@/domain/msme-draft";
 import type {
   AuditEventRow,
   CalendarEventRow,
   CaseHearingRow,
+  MsmeDraftRow,
   CommunicationDeliveryRow,
   CommunicationRow,
   Database,
@@ -291,6 +301,33 @@ function toDdRecord(row: DdRecordRow): DdRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function toMsmeDraft(row: MsmeDraftRow): MsmeDraft {
+  return {
+    caseId: row.case_id,
+    formData: row.form_data ?? {},
+    savedStages: row.saved_stages.filter((s): s is MsmeDraftStage => (MSME_STAGES as readonly string[]).includes(s)),
+    currentStage: (MSME_STAGES as readonly string[]).includes(row.current_stage)
+      ? (row.current_stage as MsmeDraftStage)
+      : "claimant",
+    status: row.status,
+    diaryNumber: row.diary_number,
+    petitionPdfKey: row.petition_pdf_key,
+    lockedAt: row.locked_at,
+    version: row.version,
+    updatedAt: row.updated_at,
+  };
+}
+
+/** Maps the draft RPCs' failures onto the typed domain errors. */
+function rethrowMsmeDraftError(e: unknown): never {
+  const message = e instanceof Error ? e.message : String(e);
+  if (/draft is locked|already locked|immutable/i.test(message)) throw new MsmeDraftError(MSME_LOCKED_MESSAGE, "locked");
+  if (/changed by another session|created by another session/i.test(message)) {
+    throw new MsmeDraftError(MSME_CONFLICT_MESSAGE, "conflict");
+  }
+  throw e;
 }
 
 function toHearing(row: CaseHearingRow): CaseHearing {
@@ -1540,6 +1577,19 @@ export class SupabaseRepository implements Repository {
     return { sessionUrl: outcome.result.data?.sessionUrl ?? null };
   }
 
+  async getGstEvidence(caseId: string): Promise<GstEvidence> {
+    const supabase = await this.db();
+    const res = await supabase
+      .from("audit_events")
+      .select("action, reason, created_at")
+      .eq("entity", "recovery_case")
+      .eq("entity_id", caseId)
+      .in("action", [...GST_EVIDENCE_ACTIONS])
+      .order("created_at", { ascending: true });
+    const rows = unwrap(res, "getGstEvidence") as unknown as Array<{ action: string; reason: string | null; created_at: string }>;
+    return reconstructGstEvidence(rows.map((r) => ({ action: r.action, reason: r.reason, createdAt: r.created_at })));
+  }
+
   async captureGstFiling(
     caseId: string,
     staffReference: string,
@@ -1597,7 +1647,7 @@ export class SupabaseRepository implements Repository {
       p_case: filed.updatedCase,
       p_action: "gst.filed",
       p_entity: "recovery_case",
-      p_reason: `${filed.note}; reference ${referenceNumber}`,
+      p_reason: buildGstFiledReason(filed.note, referenceNumber),
       p_communication: {
         channel: "email",
         direction: "outbound",
@@ -1623,7 +1673,8 @@ export class SupabaseRepository implements Repository {
     stage: MsmeStage,
     payload: Record<string, unknown>,
     actor: MutationActor,
-  ): Promise<{ resumeToken: string | null }> {
+    expectedVersion?: number | null,
+  ): Promise<{ resumeToken: string | null; version: number }> {
     const supabase = await this.db();
     const kase = await this.getCase(caseId);
     if (!kase) throw new Error(`saveMsmeStage: case ${caseId} not found`);
@@ -1633,16 +1684,29 @@ export class SupabaseRepository implements Repository {
       (key) => getAdapters().msmePortal.saveStage({ idempotencyKey: key, caseId, stage, payload }),
       idempotencyKey,
     );
-    void actor; // audit-only write; see the note in openGstAssistedSession above.
-    await recordAudit(
-      supabase,
-      kase.organisationId,
-      "msme.stage_saved",
-      "recovery_case",
-      caseId,
-      `Stage "${stage}" saved (${outcome.result.outcome})`,
-    );
-    return { resumeToken: outcome.result.data?.resumeToken ?? null };
+    // The durable write: the draft row (form data, stage, version) plus its
+    // audit event, atomically, in the save_msme_stage RPC.
+    let row: MsmeDraftRow;
+    try {
+      row = await callWriteRpc<MsmeDraftRow>(supabase, "save_msme_stage", {
+        p_case_id: caseId,
+        p_stage: stage,
+        p_payload: payload,
+        p_reason: `Stage "${stage}" saved (${outcome.result.outcome})`,
+        p_expected_version: expectedVersion ?? null,
+        p_expected_actor_id: actor.actorId,
+      });
+    } catch (e) {
+      rethrowMsmeDraftError(e);
+    }
+    return { resumeToken: outcome.result.data?.resumeToken ?? null, version: row.version };
+  }
+
+  async getMsmeDraft(caseId: string) {
+    const supabase = await this.db();
+    const { data, error } = await supabase.from("msme_drafts").select("*").eq("case_id", caseId).maybeSingle();
+    if (error) throw new Error(`SupabaseRepository.getMsmeDraft: ${error.message}`);
+    return data ? toMsmeDraft(data) : null;
   }
 
   async buildMsmePreview(
@@ -1708,6 +1772,23 @@ export class SupabaseRepository implements Repository {
     const petitionPdfKey = outcome.result.data?.petitionPdfKey ?? null;
     const filed = applyMsmeFiled(kase);
     const debtor = await this.getDebtor(kase.debtorId);
+
+    // Lock the draft FIRST: once a filing is submitted the saved form data must
+    // be immutable, and if the case update below then fails the draft stays
+    // locked (fail closed) rather than remaining editable after a real filing.
+    if (diaryNumber) {
+      try {
+        await callWriteRpc<MsmeDraftRow>(supabase, "lock_msme_draft", {
+          p_case_id: caseId,
+          p_diary_number: diaryNumber,
+          p_petition_pdf_key: petitionPdfKey,
+          p_reason: `Filing submitted; diary number ${diaryNumber}`,
+          p_expected_actor_id: actor.actorId,
+        });
+      } catch (e) {
+        rethrowMsmeDraftError(e);
+      }
+    }
 
     const updatedRow = await callWriteRpc<RecoveryCaseRow>(supabase, "apply_case_mutation", {
       p_case_id: caseId,

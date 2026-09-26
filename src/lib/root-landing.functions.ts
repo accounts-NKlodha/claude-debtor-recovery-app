@@ -5,18 +5,19 @@
  * needed once real routes exist to prove the toolchain against).
  */
 import { createServerFn } from "@tanstack/react-start";
-import { getAuthContext, isProduction } from "@/lib/auth/tanstack-session";
+import { demoFallbackAllowed, getAuthContext, isProduction } from "@/lib/auth/tanstack-session";
 
 /** Pure, directly unit-testable (see root-landing.guard.test.ts). */
 export function decideLandingRedirect(
   actor: Awaited<ReturnType<typeof getAuthContext>>,
   isProd: boolean,
+  demoFallback: boolean = !isProd,
 ): "/dashboard" | "/client" | "/sign-in" {
-  if (!actor) return isProd ? "/sign-in" : "/dashboard";
+  if (!actor) return isProd || !demoFallback ? "/sign-in" : "/dashboard";
   return actor.kind === "client" ? "/client" : "/dashboard";
 }
 
 export const getLandingRedirect = createServerFn({ method: "GET" }).handler(async () => {
   const actor = await getAuthContext();
-  return { to: decideLandingRedirect(actor, isProduction()) };
+  return { to: decideLandingRedirect(actor, isProduction(), demoFallbackAllowed()) };
 });

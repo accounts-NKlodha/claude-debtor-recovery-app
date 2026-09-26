@@ -10,7 +10,7 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { getRepo } from "@/server/repo.tanstack";
-import { getAuthContext, requireStaffSession } from "@/lib/auth/tanstack-session";
+import { demoFallbackAllowed, getAuthContext, requireStaffSession } from "@/lib/auth/tanstack-session";
 import type { AuthContext } from "@/lib/auth/types";
 
 const PORTAL_RUN_STATUSES = ["gst_eligibility_review", "gst_notification_prepared", "msme_eligibility_review"];
@@ -51,5 +51,8 @@ export const getClientsPolicyData = createServerFn({ method: "GET" }).handler(as
  */
 export const getNewClientPageAccess = createServerFn({ method: "GET" }).handler(async () => {
   const actor = await getAuthContext();
+  // No session (or a revoked one) is not "admin" -- the null->admin render
+  // rule exists only for the demo-data fallback.
+  if (!actor && !demoFallbackAllowed()) return { isAdmin: false };
   return { isAdmin: isAdminForRender(actor) };
 });

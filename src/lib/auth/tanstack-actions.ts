@@ -8,7 +8,7 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "@/lib/supabase/tanstack-server";
-import { getAuthContext } from "@/lib/auth/tanstack-session";
+import { clearRequestAuthCache, getAuthContext } from "@/lib/auth/tanstack-session";
 
 /** Never discloses whether a specific email is registered, whether the
  * password was wrong, or any provider-internal detail -- mirrors
@@ -37,6 +37,7 @@ export const signInFn = createServerFn({ method: "POST" })
     // getAuthContext's doc comment in tanstack-session.ts) -- a freshly
     // created client would re-parse the incoming request's cookies and
     // never see the session that was just established above.
+    clearRequestAuthCache();
     const actor = await getAuthContext(supabase);
     if (!actor) {
       await supabase.auth.signOut({ scope: "local" });
@@ -49,5 +50,6 @@ export const signInFn = createServerFn({ method: "POST" })
 export const signOutFn = createServerFn({ method: "POST" }).handler(async () => {
   const supabase = await createClient();
   await supabase.auth.signOut();
+  clearRequestAuthCache();
   return { ok: true };
 });

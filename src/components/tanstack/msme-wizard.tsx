@@ -30,6 +30,7 @@ import {
   type SaveMsmeStageState,
 } from "@/lib/msme.functions";
 import type { MsmeStage } from "@/contract/adapters";
+import { resumeStepIndex, type MsmeDraft } from "@/domain/msme-draft";
 
 const STAGES = [
   "Claimant",
@@ -60,6 +61,8 @@ export interface MsmeSeed {
   respondentName: string;
   respondentGstin: string;
   claimAmount: string;
+  /** The persisted Save & resume draft (null = never saved). */
+  draft: (Omit<MsmeDraft, "formData"> & { formData: Record<string, string> }) | null;
 }
 
 const SAVE_MSME_STAGE_IDLE: SaveMsmeStageState = { result: null, error: null };
@@ -99,9 +102,12 @@ function TextField({
 
 export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
   const router = useRouter();
-  const [step, setStep] = React.useState(0);
+  const draft = seed.draft;
+  const [step, setStep] = React.useState(() => resumeStepIndex(draft));
+  // Version of the draft this page last saw, for the server's stale-write check.
+  const [draftVersion, setDraftVersion] = React.useState(draft?.version ?? 0);
   const [showErrors, setShowErrors] = React.useState(false);
-  const [data, setData] = React.useState<Data>({
+  const [data, setData] = React.useState<Data>(() => ({
     claimantName: seed.claimantName,
     claimantUdyam: seed.claimantUdyam,
     claimantAddress: "",
@@ -113,7 +119,9 @@ export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
     claimAmount: seed.claimAmount,
     claimNarrative: "",
     documentsList: "Invoices, ledger statement, delivery proof, reminder correspondence",
-  });
+    // Saved values win over the seeded defaults (strings only; the draft is a flat form object).
+    ...Object.fromEntries(Object.entries(draft?.formData ?? {}).filter(([, v]) => typeof v === "string")),
+  }));
   const set = (k: string) => (v: string) => setData((d) => ({ ...d, [k]: v }));
 
   const [saveState, setSaveState] = React.useState<SaveMsmeStageState>(SAVE_MSME_STAGE_IDLE);
@@ -123,13 +131,15 @@ export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
   const [ackPending, setAckPending] = React.useState(false);
 
   const saved = saveState.result !== null;
-  const locked = !!ackState.result?.diaryNumber;
+  const locked = !!ackState.result?.diaryNumber || draft?.status === "locked";
 
   const preview = previewState.result;
   const acknowledgement =
     ackState.result?.diaryNumber
       ? { diaryNumber: ackState.result.diaryNumber, petitionPdfKey: ackState.result.petitionPdfKey }
-      : null;
+      : draft?.status === "locked" && draft.diaryNumber
+        ? { diaryNumber: draft.diaryNumber, petitionPdfKey: draft.petitionPdfKey }
+        : null;
   // Distinguishes a genuine thrown/authorization failure (state.error) from
   // the legitimate "submitted, but the portal didn't return a diary number"
   // business outcome (result present with a null diaryNumber) -- neither is
@@ -181,8 +191,11 @@ export function MsmeWizard({ seed }: { seed: MsmeSeed }) {
     event.preventDefault();
     setSavePending(true);
     try {
-      const result = await saveMsmeStageFn({ data: { caseId: seed.caseId, stage: STAGE_KEYS[step], payload: data } });
+      const result = await saveMsmeStageFn({
+        data: { caseId: seed.caseId, stage: STAGE_KEYS[step], payload: data, expectedVersion: draftVersion },
+      });
       setSaveState(result);
+      if (result.result) setDraftVersion(result.result.version);
     } catch {
       setSaveState({ result: null, error: "Failed to save this stage" });
     } finally {

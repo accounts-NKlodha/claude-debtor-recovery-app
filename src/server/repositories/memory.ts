@@ -6,6 +6,7 @@
  * can't mutate shared demo state.
  */
 
+import { buildGstFiledReason, GST_EVIDENCE_ACTIONS, reconstructGstEvidence } from "@/domain/gst-evidence";
 import { nanoid } from "nanoid";
 import * as mock from "@/lib/mock-data";
 import { istBusinessDate } from "@/domain/scheduling";
@@ -61,6 +62,7 @@ import {
   type ManualInvoiceInput,
 } from "@/contract/schemas";
 import type { MsmeStage } from "@/contract/adapters";
+import { applyMsmeDraftLock, applyMsmeStageSave, type MsmeDraft } from "@/domain/msme-draft";
 import type { Channel, ReplyClassification } from "@/contract/enums";
 import type { Communication, Invoice, Organisation, PaymentRecord, RecoveryCase } from "@/contract/types";
 import type { MutationActor } from "@/lib/auth/types";
@@ -90,6 +92,9 @@ function buildKnownInvoiceKeys(): Set<string> {
     }),
   );
 }
+
+/** Save & resume drafts for demo mode; lives with the process like the rest of the mock data. */
+const msmeDrafts = new Map<string, MsmeDraft>();
 
 export class MemoryRepository implements Repository {
   /**
@@ -968,7 +973,7 @@ export class MemoryRepository implements Repository {
       action: "gst.filed",
       entity: "recovery_case",
       entityId: caseId,
-      reason: `${filed.note}; reference ${referenceNumber}`,
+      reason: buildGstFiledReason(filed.note, referenceNumber),
       actorId: actor.actorId,
       actorRole: actor.actorRole,
     });
@@ -976,17 +981,37 @@ export class MemoryRepository implements Repository {
     return tick({ case: updatedCase, referenceNumber });
   }
 
+  async getGstEvidence(caseId: string) {
+    return tick(
+      reconstructGstEvidence(
+        mock.AUDIT_LOG.filter((e) => e.entity === "recovery_case" && e.entityId === caseId && GST_EVIDENCE_ACTIONS.includes(e.action)),
+      ),
+    );
+  }
+
   async saveMsmeStage(
     caseId: string,
     stage: MsmeStage,
     payload: Record<string, unknown>,
     actor: MutationActor,
+    expectedVersion?: number | null,
   ) {
     const idempotencyKey = `msme-stage:${caseId}:${stage}`;
     const outcome = await runAdapter(
       (key) => getAdapters().msmePortal.saveStage({ idempotencyKey: key, caseId, stage, payload }),
       idempotencyKey,
     );
+    const kase = mock.getCase(caseId);
+    const draft = applyMsmeStageSave({
+      existing: msmeDrafts.get(caseId),
+      caseId,
+      caseStatus: kase?.status ?? "",
+      stage,
+      payload,
+      expectedVersion,
+      now: new Date().toISOString(),
+    });
+    msmeDrafts.set(caseId, draft);
     mock.appendAudit({
       action: "msme.stage_saved",
       entity: "recovery_case",
@@ -995,7 +1020,11 @@ export class MemoryRepository implements Repository {
       actorId: actor.actorId,
       actorRole: actor.actorRole,
     });
-    return tick({ resumeToken: outcome.result.data?.resumeToken ?? null });
+    return tick({ resumeToken: outcome.result.data?.resumeToken ?? null, version: draft.version });
+  }
+
+  async getMsmeDraft(caseId: string) {
+    return tick(msmeDrafts.get(caseId) ?? null);
   }
 
   async buildMsmePreview(caseId: string, actor: MutationActor) {
@@ -1049,6 +1078,18 @@ export class MemoryRepository implements Repository {
     const diaryNumber = outcome.result.data?.diaryNumber ?? null;
     const petitionPdfKey = outcome.result.data?.petitionPdfKey ?? null;
     const filed = applyMsmeFiled(kase);
+    if (diaryNumber) {
+      msmeDrafts.set(
+        caseId,
+        applyMsmeDraftLock({
+          existing: msmeDrafts.get(caseId),
+          caseId,
+          diaryNumber,
+          petitionPdfKey,
+          now: new Date().toISOString(),
+        }),
+      );
+    }
     const updatedCase = mock.mutateCase(caseId, filed.updatedCase);
 
     const debtor = mock.getDebtor(kase.debtorId);

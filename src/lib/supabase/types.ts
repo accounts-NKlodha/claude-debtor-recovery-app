@@ -246,6 +246,24 @@ export interface CaseHearingRow {
   updated_at: string;
 }
 
+export interface MsmeDraftRow {
+  id: string;
+  organisation_id: string;
+  case_id: string;
+  form_data: Record<string, unknown>;
+  saved_stages: string[];
+  current_stage: string;
+  status: "draft" | "locked";
+  diary_number: Nullable<string>;
+  petition_pdf_key: Nullable<string>;
+  locked_at: Nullable<string>;
+  version: number;
+  created_by: Nullable<string>;
+  updated_by: Nullable<string>;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CalendarEventRow {
   id: string;
   organisation_id: string;
@@ -348,6 +366,7 @@ export interface Database {
       payment_allocations: TableShape<PaymentAllocationRow, "id" | "created_at">;
       dd_records: TableShape<DdRecordRow, "id" | "status" | "created_at" | "updated_at">;
       case_hearings: TableShape<CaseHearingRow, "id" | "status" | "created_at" | "updated_at">;
+      msme_drafts: TableShape<MsmeDraftRow, "id" | "status" | "version" | "form_data" | "saved_stages" | "current_stage" | "created_at" | "updated_at">;
       calendar_events: TableShape<CalendarEventRow, "id" | "created_at">;
       debtor_replies: TableShape<DebtorReplyRow, "id" | "received_at">;
       payment_promises: TableShape<PaymentPromiseRow, "id" | "created_at" | "status" | "superseded_at">;
@@ -490,6 +509,27 @@ export interface Database {
           p_expected_actor_id?: string | null;
         };
         Returns: DdRecordRow;
+      };
+      save_msme_stage: {
+        Args: {
+          p_case_id: string;
+          p_stage: string;
+          p_payload: Record<string, unknown>;
+          p_reason: string | null;
+          p_expected_version?: number | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: MsmeDraftRow;
+      };
+      lock_msme_draft: {
+        Args: {
+          p_case_id: string;
+          p_diary_number: string;
+          p_petition_pdf_key: string | null;
+          p_reason: string | null;
+          p_expected_actor_id?: string | null;
+        };
+        Returns: MsmeDraftRow;
       };
       schedule_hearing: {
         Args: {

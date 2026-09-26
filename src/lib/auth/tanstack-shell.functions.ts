@@ -10,7 +10,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import type { Organisation } from "@/contract/types";
 import { getRepo } from "@/server/repo.tanstack";
-import { getAuthContext, isProduction } from "@/lib/auth/tanstack-session";
+import { demoFallbackAllowed, getAuthContext, isProduction } from "@/lib/auth/tanstack-session";
 
 const INTAKE_PIPELINE_STATUSES = ["received", "under_validation", "correction_required"];
 const PORTAL_RUN_STATUSES = ["gst_eligibility_review", "gst_notification_prepared", "msme_eligibility_review"];
@@ -39,11 +39,14 @@ export type ShellResult =
 export function decideShellRedirect(
   actor: Awaited<ReturnType<typeof getAuthContext>>,
   isProd: boolean,
+  /** Whether the non-production demo actor may stand in for "no session"
+   * (see demoFallbackAllowed). Defaults to the historical rule. */
+  demoFallback: boolean = !isProd,
 ): { kind: "redirect"; to: "/client" | "/sign-in" } | null {
   if (actor && actor.kind === "client") {
     return { kind: "redirect", to: "/client" };
   }
-  if (!actor && isProd) {
+  if (!actor && (isProd || !demoFallback)) {
     return { kind: "redirect", to: "/sign-in" };
   }
   return null;
@@ -84,7 +87,7 @@ export async function resolveInternalShellData(
 
 export const getInternalShellData = createServerFn({ method: "GET" }).handler(async (): Promise<ShellResult> => {
   const actor = await getAuthContext();
-  const redirect = decideShellRedirect(actor, isProduction());
+  const redirect = decideShellRedirect(actor, isProduction(), demoFallbackAllowed());
   if (redirect) return redirect;
 
   const repo = await getRepo();

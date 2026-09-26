@@ -18,7 +18,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import type { Organisation } from "@/contract/types";
 import { getRepo } from "@/server/repo.tanstack";
-import { getAuthContext, isProduction } from "@/lib/auth/tanstack-session";
+import { demoFallbackAllowed, getAuthContext, isProduction } from "@/lib/auth/tanstack-session";
 
 /** The only organisation fields the client browser needs (a label): never
  * client code, GSTIN/Udyam, fee tier or payment details. */
@@ -40,11 +40,12 @@ export type ClientShellResult =
 export function decideClientShellRedirect(
   actor: Awaited<ReturnType<typeof getAuthContext>>,
   isProd: boolean,
+  demoFallback: boolean = !isProd,
 ): { kind: "redirect"; to: "/dashboard" | "/sign-in" } | null {
   if (actor && actor.kind !== "client") {
     return { kind: "redirect", to: "/dashboard" };
   }
-  if (!actor && isProd) {
+  if (!actor && (isProd || !demoFallback)) {
     return { kind: "redirect", to: "/sign-in" };
   }
   return null;
@@ -76,7 +77,7 @@ export async function resolveClientShellData(
 
 export const getClientShellData = createServerFn({ method: "GET" }).handler(async (): Promise<ClientShellResult> => {
   const actor = await getAuthContext();
-  const redirect = decideClientShellRedirect(actor, isProduction());
+  const redirect = decideClientShellRedirect(actor, isProduction(), demoFallbackAllowed());
   if (redirect) return redirect;
 
   const repo = await getRepo();

@@ -21,23 +21,10 @@ import type { Repository } from "./repository";
 import { MemoryRepository } from "./repositories/memory";
 import { SupabaseRepository } from "./repositories/supabase";
 import { createClient as createTanstackSupabaseClient } from "@/lib/supabase/tanstack-server";
+import { isProductionRuntime, resolveRepoMode } from "./repo-mode";
 
-export type RepoMode = "memory" | "supabase";
-
-function isProductionRuntime(): boolean {
-  return process.env.NODE_ENV === "production";
-}
-
-function hasSupabaseConfig(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-}
-
-export function resolveRepoMode(): RepoMode {
-  if (isProductionRuntime()) return "supabase";
-  const profile = process.env.DATA_PROFILE;
-  if (profile === "memory" || profile === "supabase") return profile;
-  return hasSupabaseConfig() ? "supabase" : "memory";
-}
+export type { RepoMode } from "./repo-mode";
+export { resolveRepoMode } from "./repo-mode";
 
 let loggedMode = false;
 

@@ -16,7 +16,11 @@ export const getMsmeDetailData = createServerFn({ method: "GET" })
     const kase = await repo.getCase(caseId);
     if (!kase) return null;
 
-    const [debtor, org] = await Promise.all([repo.getDebtor(kase.debtorId), repo.getOrg(kase.organisationId)]);
+    const [debtor, org, draft] = await Promise.all([
+      repo.getDebtor(kase.debtorId),
+      repo.getOrg(kase.organisationId),
+      repo.getMsmeDraft(caseId),
+    ]);
 
     return {
       caseId,
@@ -26,5 +30,14 @@ export const getMsmeDetailData = createServerFn({ method: "GET" })
       respondentGstin: debtor?.gstin ?? "",
       claimAmount: formatInr(kase.principalOutstanding, { withSymbol: false }),
       clientName: org?.legalEntityName ?? "—",
+      // The wizard's form is flat strings; narrowing here also keeps the payload serialisable.
+      draft: draft
+        ? {
+            ...draft,
+            formData: Object.fromEntries(
+              Object.entries(draft.formData).filter((e): e is [string, string] => typeof e[1] === "string"),
+            ),
+          }
+        : null,
     };
   });

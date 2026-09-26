@@ -283,6 +283,12 @@ export interface Repository {
   ): Promise<{ case: RecoveryCase; manifestHash: string | null }>;
   /** Opens the controlled browser session; always human_action_required -- no CAPTCHA/OTP bypass. */
   openGstAssistedSession(caseId: string, actor: MutationActor): Promise<{ sessionUrl: string | null }>;
+  /**
+   * Durable GST evidence for a case (session opened / filing + reference),
+   * reconstructed from the recognised GST audit events. Read-only; used to
+   * hydrate the GST panel after a reload.
+   */
+  getGstEvidence(caseId: string): Promise<import("@/domain/gst-evidence").GstEvidence>;
   /** Called after the operator confirms Send. Fails closed on drift (scenario 9). */
   captureGstFiling(
     caseId: string,
@@ -300,7 +306,10 @@ export interface Repository {
     stage: import("@/contract/adapters").MsmeStage,
     payload: Record<string, unknown>,
     actor: MutationActor,
-  ): Promise<{ resumeToken: string | null }>;
+    expectedVersion?: number | null,
+  ): Promise<{ resumeToken: string | null; version: number }>;
+  /** The persisted Save & resume draft for a case (null = never saved). */
+  getMsmeDraft(caseId: string): Promise<import("@/domain/msme-draft").MsmeDraft | null>;
   /** Builds the immutable preview snapshot ahead of final submit. */
   buildMsmePreview(
     caseId: string,

@@ -15,10 +15,13 @@ export const getGstDetailData = createServerFn({ method: "GET" })
     const kase = await repo.getCase(caseId);
     if (!kase) return null;
 
-    const [debtor, org, invoices] = await Promise.all([
+    // Not swallowed on purpose: showing "Not started" because the evidence
+    // read failed would be exactly the false state this exists to prevent.
+    const [debtor, org, invoices, evidence] = await Promise.all([
       repo.getDebtor(kase.debtorId),
       repo.getOrg(kase.organisationId),
       repo.listInvoicesForCase(caseId),
+      repo.getGstEvidence(caseId),
     ]);
 
     return {
@@ -28,5 +31,8 @@ export const getGstDetailData = createServerFn({ method: "GET" })
       clientName: org?.legalEntityName ?? "—",
       principalOutstanding: kase.principalOutstanding,
       invoiceCount: Math.max(1, invoices.length),
+      caseStatus: kase.status,
+      nextScheduledAt: kase.nextScheduledAt,
+      evidence,
     };
   });
