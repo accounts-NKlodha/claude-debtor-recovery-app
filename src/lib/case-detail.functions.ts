@@ -8,6 +8,7 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { getRepo } from "@/server/repo.tanstack";
+import { requireStaffSession } from "@/lib/auth/tanstack-session";
 import { toOfferView } from "@/domain/whatsapp-messages";
 import { isPreActivation } from "@/domain/activation";
 
@@ -15,6 +16,7 @@ export const getCaseDetailData = createServerFn({ method: "GET" })
   .validator((data: unknown) => data as { id: string })
   .handler(async ({ data }) => {
     const { id } = data;
+    await requireStaffSession();
     const repo = await getRepo();
     const kase = await repo.getCase(id);
     if (!kase) return null;

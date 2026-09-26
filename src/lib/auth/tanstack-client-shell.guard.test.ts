@@ -67,6 +67,8 @@ describe("resolveClientShellData", () => {
     expect(result.kind).toBe("ok");
     if (result.kind === "ok") {
       expect(result.organisations.map((o) => o.id)).toEqual(["org-1", "org-2"]);
+      // label fields only: no client code, GSTIN/Udyam, fee tier or UPI details
+      for (const o of result.organisations) expect(Object.keys(o).sort()).toEqual(["id", "legalEntityName"]);
       expect(result.user).toEqual({ displayName: "Test Client", email: null, role: "client" });
     }
   });
@@ -79,7 +81,7 @@ describe("resolveClientShellData", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind === "ok") {
-      expect(result.organisations).toEqual(all);
+      expect(result.organisations).toEqual(all.map((o) => ({ id: o.id, legalEntityName: o.legalEntityName })));
       expect(result.user).toEqual({ displayName: "Client (demo)", email: null, role: "client" });
     }
   });

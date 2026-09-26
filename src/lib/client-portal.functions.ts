@@ -11,6 +11,7 @@ import type { Repository } from "@/server/repository";
 import { resolveClientOrganisationId } from "@/lib/auth/tanstack-session";
 import { CLIENT_SAFE_LABEL } from "@/contract/enums";
 import type { RecoveryCase } from "@/contract/types";
+import type { ClientOverview } from "@/lib/mock-data";
 
 /** What a client may see about one of its own cases: no internal step,
  * blocker, assignee, automation mode or scheduling detail. */
@@ -22,6 +23,32 @@ export interface ClientCaseView {
   closed: boolean;
   principalOutstanding: number;
   recoveredToDate: number;
+}
+
+/** Explicit whitelist of what the client overview page renders. The repository
+ * ClientOverview also carries orgId, stageWise and fee billed/currency; those
+ * (and anything added to it later) never reach the client browser unless they
+ * are added here on purpose. */
+export interface ClientOverviewView {
+  actionsRequired: number;
+  totalOutstanding: number;
+  recovered: number;
+  recoveryRatePct: number;
+  upcomingAction: { label: string; when: string | null } | null;
+  feeSummary: { estimatedFee: number };
+  ageing: Array<{ bucket: string; amount: number }>;
+}
+
+export function toClientOverviewView(o: ClientOverview): ClientOverviewView {
+  return {
+    actionsRequired: o.actionsRequired,
+    totalOutstanding: o.totalOutstanding,
+    recovered: o.recovered,
+    recoveryRatePct: o.recoveryRatePct,
+    upcomingAction: o.upcomingAction ? { label: o.upcomingAction.label, when: o.upcomingAction.when } : null,
+    feeSummary: { estimatedFee: o.feeSummary.estimatedFee },
+    ageing: o.ageing.map((a) => ({ bucket: a.bucket, amount: a.amount })),
+  };
 }
 
 const CLOSED_STATUSES: RecoveryCase["status"][] = ["recovered", "closed", "withdrawn", "archived"];
@@ -59,7 +86,13 @@ export const getClientOverviewData = createServerFn({ method: "GET" }).handler(a
     repo.recoveryTrend(),
     repo.stageFunnel(),
   ]);
-  return { org, overview, cases: await toClientCaseViews(repo, cases), trend, stageFunnel };
+  return {
+    org: { legalEntityName: org.legalEntityName },
+    overview: toClientOverviewView(overview),
+    cases: await toClientCaseViews(repo, cases),
+    trend,
+    stageFunnel,
+  };
 });
 
 export const getClientCasesData = createServerFn({ method: "GET" }).handler(async () => {

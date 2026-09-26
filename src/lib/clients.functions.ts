@@ -10,7 +10,7 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { getRepo } from "@/server/repo.tanstack";
-import { getAuthContext } from "@/lib/auth/tanstack-session";
+import { getAuthContext, requireStaffSession } from "@/lib/auth/tanstack-session";
 import type { AuthContext } from "@/lib/auth/types";
 
 const PORTAL_RUN_STATUSES = ["gst_eligibility_review", "gst_notification_prepared", "msme_eligibility_review"];
@@ -21,9 +21,13 @@ export function isAdminForRender(actor: AuthContext | null): boolean {
 }
 
 export const getClientsPolicyData = createServerFn({ method: "GET" }).handler(async () => {
+  // Role guard first (client -> Forbidden, production no session -> Unauthenticated),
+  // before any repository call. The demo actor maps back to null so the
+  // non-production render behaviour of isAdminForRender is unchanged.
+  const guarded = await requireStaffSession();
+  const actor = guarded.demo ? null : guarded;
   const repo = await getRepo();
-  const [actor, { enabled }, cases, organisations] = await Promise.all([
-    getAuthContext(),
+  const [{ enabled }, cases, organisations] = await Promise.all([
     repo.getAutomationState(),
     repo.listAllCases(),
     repo.listOrganisations(),

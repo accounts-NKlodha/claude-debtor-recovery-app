@@ -41,6 +41,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { Organisation } from "@/contract/types";
 
+type ShellOrganisation = Pick<Organisation, "id" | "legalEntityName">;
+
 type Surface = "internal" | "client";
 type NavItem = { href: string; label: string; Icon: React.ComponentType<{ className?: string }> };
 type NavSection = { heading?: string; items: NavItem[] };
@@ -184,7 +186,7 @@ export function AppShell({
   children,
 }: {
   surface: Surface;
-  organisations: Organisation[];
+  organisations: ShellOrganisation[];
   counts?: Partial<Record<string, number>>;
   user: { displayName: string; email: string | null; role: string };
   children: React.ReactNode;

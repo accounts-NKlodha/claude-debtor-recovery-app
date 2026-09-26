@@ -4,10 +4,12 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { getRepo } from "@/server/repo.tanstack";
+import { requireStaffSession } from "@/lib/auth/tanstack-session";
 
 const MSME_STATUSES = ["msme_odr_filed", "msefc_dd", "hearing_scheduled", "adjourned"];
 
 export const getMsmeListData = createServerFn({ method: "GET" }).handler(async () => {
+  await requireStaffSession();
   const repo = await getRepo();
   const cases = await repo.listAllCases();
   const eligible = cases.filter(

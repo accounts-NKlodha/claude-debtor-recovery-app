@@ -4,11 +4,13 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { getRepo } from "@/server/repo.tanstack";
+import { requireStaffSession } from "@/lib/auth/tanstack-session";
 
 export const getGstDetailData = createServerFn({ method: "GET" })
   .validator((data: unknown) => data as { caseId: string })
   .handler(async ({ data }) => {
     const { caseId } = data;
+    await requireStaffSession();
     const repo = await getRepo();
     const kase = await repo.getCase(caseId);
     if (!kase) return null;

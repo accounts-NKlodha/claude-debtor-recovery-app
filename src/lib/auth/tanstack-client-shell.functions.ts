@@ -20,9 +20,17 @@ import type { Organisation } from "@/contract/types";
 import { getRepo } from "@/server/repo.tanstack";
 import { getAuthContext, isProduction } from "@/lib/auth/tanstack-session";
 
+/** The only organisation fields the client browser needs (a label): never
+ * client code, GSTIN/Udyam, fee tier or payment details. */
+export type ClientShellOrganisation = Pick<Organisation, "id" | "legalEntityName">;
+
 export type ClientShellResult =
   | { kind: "redirect"; to: "/dashboard" | "/sign-in" }
-  | { kind: "ok"; organisations: Organisation[]; user: { displayName: string; email: string | null; role: "client" } };
+  | {
+      kind: "ok";
+      organisations: ClientShellOrganisation[];
+      user: { displayName: string; email: string | null; role: "client" };
+    };
 
 /**
  * Pure redirect decision, factored out for direct unit-testability (see
@@ -59,7 +67,11 @@ export async function resolveClientShellData(
       ? { displayName: actor.displayName, email: null, role: "client" as const }
       : { displayName: "Client (demo)", email: null, role: "client" as const };
 
-  return { kind: "ok", organisations, user };
+  return {
+    kind: "ok",
+    organisations: organisations.map((o) => ({ id: o.id, legalEntityName: o.legalEntityName })),
+    user,
+  };
 }
 
 export const getClientShellData = createServerFn({ method: "GET" }).handler(async (): Promise<ClientShellResult> => {

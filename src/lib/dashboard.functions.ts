@@ -6,8 +6,10 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { getRepo } from "@/server/repo.tanstack";
+import { requireStaffSession } from "@/lib/auth/tanstack-session";
 
 export const getDashboardData = createServerFn({ method: "GET" }).handler(async () => {
+  await requireStaffSession();
   const repo = await getRepo();
   const [k, queue, trend, ageing, stageFunnel] = await Promise.all([
     repo.dashboardKpis(),

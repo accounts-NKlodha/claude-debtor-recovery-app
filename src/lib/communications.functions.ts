@@ -5,9 +5,11 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { getRepo } from "@/server/repo.tanstack";
+import { requireStaffSession } from "@/lib/auth/tanstack-session";
 import type { CommRow } from "@/components/tanstack/comms-log";
 
 export const getCommunicationsData = createServerFn({ method: "GET" }).handler(async (): Promise<{ rows: CommRow[] }> => {
+  await requireStaffSession();
   const repo = await getRepo();
   const comms = await repo.listAllCommunications();
   const rows: CommRow[] = await Promise.all(

@@ -4,8 +4,10 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { getRepo } from "@/server/repo.tanstack";
+import { requireStaffSession } from "@/lib/auth/tanstack-session";
 
 export const getGstListData = createServerFn({ method: "GET" }).handler(async () => {
+  await requireStaffSession();
   const repo = await getRepo();
   const cases = await repo.listAllCases();
   const eligible = cases.filter((c) => c.eligibilityRoute === "gst" || c.status.startsWith("gst"));
