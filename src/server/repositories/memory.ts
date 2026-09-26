@@ -6,6 +6,7 @@
  * can't mutate shared demo state.
  */
 
+import { AUTOMATION_BLOCKED_AUDIT_ACTION, assertAutomationEnabled } from "@/domain/automation-guard";
 import { buildGstFiledReason, GST_EVIDENCE_ACTIONS, reconstructGstEvidence } from "@/domain/gst-evidence";
 import { nanoid } from "nanoid";
 import * as mock from "@/lib/mock-data";
@@ -522,6 +523,23 @@ export class MemoryRepository implements Repository {
     return tick({ payment, updatedCase });
   }
 
+  /** Throws (and audits) unless automation is enabled; mirrors SupabaseRepository.assertSendsPermitted. */
+  private async assertSendsPermitted(caseId: string): Promise<void> {
+    await assertAutomationEnabled(
+      async () => (await this.getAutomationState()).enabled,
+      async (reason) => {
+        mock.appendAudit({
+          action: AUTOMATION_BLOCKED_AUDIT_ACTION,
+          entity: "recovery_case",
+          entityId: caseId,
+          reason,
+          actorId: "system",
+          actorRole: "system",
+        });
+      },
+    );
+  }
+
   /** Mirrors SupabaseRepository.sendReminderChannel() exactly -- same
    * begin/attempt/complete sequence, same idempotency semantics, backed by
    * mock.beginCommunicationSend/beginDeliveryAttempt/completeDeliveryAttempt
@@ -543,6 +561,8 @@ export class MemoryRepository implements Repository {
     outcome: "success" | "already_sent" | "retryable_failure" | "permanent_failure" | "human_action_required" | "drift_detected";
     ambiguousBlock: boolean;
   }> {
+    await this.assertSendsPermitted(caseId);
+
     const idempotencyKey =
       idempotencyKeyOverride ?? `reminder-initial:${channel}:${caseId}:${new Date().toISOString().slice(0, 10)}`;
 
@@ -592,6 +612,8 @@ export class MemoryRepository implements Repository {
   ) {
     const kase = mock.getCase(caseId);
     if (!kase) throw new Error(`sendInitialReminder: case ${caseId} not found`);
+    // Kill switch first: with automation disabled NO channel may be planned or attempted.
+    await this.assertSendsPermitted(caseId);
     // With the live WhatsApp provider configured, initial reminders are tracked
     // PER INVOICE (src/domain/reminder-stage.ts): the case stays in its reminder
     // phase while other invoices still await theirs. Without it (email only /

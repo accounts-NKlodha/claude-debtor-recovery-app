@@ -337,7 +337,7 @@ describe("SupabaseRepository.sendInitialReminder: WhatsApp production safety", (
     expect(whatsappComplete?.args.p_provider).toBe("fake-whatsapp");
   });
 
-  it("kill switch behavior: in production with WHATSAPP_PROVIDER=aisensy configured but the global automation kill switch off, WhatsApp is skipped (not attempted, not failed) and only email is sent", async () => {
+  it("kill switch behavior: in production with the global automation kill switch engaged, NEITHER channel is attempted (no provider call, nothing recorded, case untouched)", async () => {
     vi.stubEnv("NODE_ENV", "production");
     isLiveWhatsAppConfiguredMock.mockReturnValue(true);
     fakeEmailAdapter.send.mockResolvedValue({
@@ -366,12 +366,18 @@ describe("SupabaseRepository.sendInitialReminder: WhatsApp production safety", (
 
     const { SupabaseRepository } = await import("./supabase");
     const repo = new SupabaseRepository();
-    const result = await repo.sendInitialReminder("case-1", ACTOR);
+    await expect(repo.sendInitialReminder("case-1", ACTOR)).rejects.toThrow(/kill switch/i);
 
     expect(fakeWhatsappAdapter.send).not.toHaveBeenCalled();
-    const channelsRequested = rpcCalls.filter((c) => c.fn === "begin_communication_send").map((c) => c.args.p_channel);
-    expect(channelsRequested).toEqual(["email"]);
-    expect(result.communications).toHaveLength(1);
+    expect(fakeEmailAdapter.send).not.toHaveBeenCalled();
+    const fns = rpcCalls.map((c) => c.fn);
+    expect(fns).not.toContain("begin_communication_send");
+    expect(fns).not.toContain("begin_delivery_attempt");
+    expect(fns).not.toContain("complete_delivery_attempt");
+    expect(fns).not.toContain("apply_case_mutation");
+    // the block itself is audited so an operator can see why nothing was sent
+    const audit = rpcCalls.find((c) => c.fn === "record_audit_event");
+    expect(audit?.args).toMatchObject({ p_action: "communication.send_blocked", p_entity: "recovery_case", p_entity_id: "case-1" });
   });
 
   it("phone normalization: in production with WHATSAPP_PROVIDER=aisensy configured, an unnormalizable debtor mobile number skips WhatsApp instead of guessing a destination", async () => {

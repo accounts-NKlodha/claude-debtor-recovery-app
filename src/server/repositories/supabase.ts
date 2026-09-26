@@ -18,6 +18,7 @@
  * repository seam.
  */
 
+import { AUTOMATION_BLOCKED_AUDIT_ACTION, assertAutomationEnabled } from "@/domain/automation-guard";
 import { buildGstFiledReason, GST_EVIDENCE_ACTIONS, reconstructGstEvidence, type GstEvidence } from "@/domain/gst-evidence";
 import { estimateSuccessFee } from "@/domain/fees";
 import { applyConfirmedPayment } from "@/domain/apply-payment";
@@ -1111,6 +1112,17 @@ export class SupabaseRepository implements Repository {
    *     channels now real, the case's own transition is computed once,
    *     after every channel has been attempted, by the caller.
    */
+  /** Throws (and audits) unless automation is enabled; nothing is sent or recorded as sent. */
+  private async assertSendsPermitted(supabase: Client, caseId: string): Promise<void> {
+    await assertAutomationEnabled(
+      async () => (await this.getAutomationState()).enabled,
+      async (reason) => {
+        const kase = await this.getCase(caseId);
+        await recordAudit(supabase, kase?.organisationId ?? null, AUTOMATION_BLOCKED_AUDIT_ACTION, "recovery_case", caseId, reason);
+      },
+    );
+  }
+
   private async sendReminderChannel(
     supabase: Client,
     caseId: string,
@@ -1131,6 +1143,11 @@ export class SupabaseRepository implements Repository {
     ambiguousBlock: boolean;
     blockedReason: string | null;
   }> {
+    // Global kill switch: the last gate before ANY provider (SMTP or AiSensy),
+    // for every message family and every retry, before a communication or
+    // delivery attempt is even recorded.
+    await this.assertSendsPermitted(supabase, caseId);
+
     const idempotencyKey =
       idempotencyKeyOverride ?? `reminder-initial:${channel}:${caseId}:${new Date().toISOString().slice(0, 10)}`;
 
@@ -1224,6 +1241,9 @@ export class SupabaseRepository implements Repository {
 
     const kase = await this.getCase(caseId);
     if (!kase) throw new Error(`sendInitialReminder: case ${caseId} not found`);
+    // Kill switch first: with automation disabled NO channel (email or WhatsApp)
+    // may be planned or attempted, so there is never a partial send.
+    await this.assertSendsPermitted(supabase, caseId);
     // With the live WhatsApp provider configured, initial reminders are tracked
     // PER INVOICE (src/domain/reminder-stage.ts): the case stays in its reminder
     // phase while other invoices still await theirs. Without it (email only /

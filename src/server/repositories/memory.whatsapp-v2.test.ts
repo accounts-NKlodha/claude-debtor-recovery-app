@@ -224,14 +224,14 @@ describe("V2 WhatsApp reminder: creditor payment details and kill switch", () =>
     expect(mock.getCase(kase.id)!.status).toBe("active");
   });
 
-  it("kill switch off: WhatsApp is skipped with a controlled warning (no send, no record); email proceeds", async () => {
+  it("kill switch engaged (automation.enabled = false): NEITHER channel is sent -- no partial send", async () => {
     await repo.setAutomationState(false, "Testing the kill switch", admin);
     const kase = seedActiveCase("case-wa-v2-killswitch");
-    const result = await repo.sendInitialReminder(kase.id, staff);
+    await expect(repo.sendInitialReminder(kase.id, staff)).rejects.toThrow(/kill switch/i);
 
     expect(fakeWhatsapp.send).not.toHaveBeenCalled();
-    expect(result.communications.map((c) => c.channel)).toEqual(["email"]);
-    expect(result.warnings[0]).toMatch(/kill switch/i);
+    expect(await repo.listCommunicationsForCase(kase.id)).toHaveLength(0);
+    expect(mock.getCase(kase.id)!.status).toBe("active");
   });
 
   it("kill switch off with no other channel: controlled error, nothing recorded", async () => {
