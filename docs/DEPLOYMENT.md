@@ -215,8 +215,14 @@ the authorization model, and the live/browser verification evidence.
 npm ci
 npm run verify           # gate: typecheck + lint + test + build
 npm run build
-NODE_ENV=production npm run start   # listens on :3000
+LIVE_COMMS_CONFIRM=I-APPROVE-LIVE-SENDS NODE_ENV=production npm run start   # listens on :3000
 ```
+
+`npm run start` is safe by default (scripts/safe-run.mjs blanks the Gmail/AiSensy secrets and disables WhatsApp), so
+a production host that must really send email/WhatsApp has to set `LIVE_COMMS_CONFIRM=I-APPROVE-LIVE-SENDS` in its
+process environment (systemd unit / pm2 ecosystem file) as a deliberate, reviewable step. Without it the app runs
+but cannot send. This applies to the self-hosted Node path only; a hosted platform runs its own start command with
+its own environment variables.
 
 Run under a process manager (systemd/pm2). Proxy `debtor.nklodha.in` → `127.0.0.1:3000`,
 forwarding `X-Forwarded-Proto` and the real client IP.

@@ -48,12 +48,19 @@ supabase db reset            # runs migrations 0001_init, 0002_rls, 0003_seed
 
 | Command | What |
 | --- | --- |
-| `npm run dev` | Next dev server on :3000 (uses mock adapters unless `ADAPTER_PROFILE=live`) |
+| `npm run dev` | Next dev server on :3000. **Safe by default**: email is mocked and WhatsApp disabled, whatever `.env.local` holds |
+| `npm run tanstack:dev` | TanStack (Vite) dev server. Same safe-by-default providers |
+| `npm run start` | Next production server. Same safe default: Gmail/AiSensy secrets are blanked, so nothing can be sent |
 | `npm run test` | Vitest unit suite (domain, orchestrator, adapters) |
 | `npm run e2e` | Playwright smoke + axe accessibility gate |
 | `npm run verify` | typecheck + lint + test + build — the merge gate |
 | `npm run desktop:dev` | Tauri desktop shell against the dev server |
 | `npm run desktop:build` | Static export + native installers (msi/nsis/dmg/appimage/deb) |
+
+**Live sends are opt-in per run.** The npm run commands above go through `scripts/safe-run.mjs`, which forces
+mock/disabled providers and blanks `SMTP_APP_PASSWORD` / `AISENSY_API_KEY` unless the run is started with
+`LIVE_COMMS_CONFIRM=I-APPROVE-LIVE-SENDS`. Real Gmail/AiSensy sends (UAT or a self-hosted production run) require
+that exact variable; `.env.local` alone can never enable them. See `scripts/safe-env.mjs`.
 
 The `.claude/settings.json` **Stop hook** runs `npm run verify` and blocks
 session handoff on any failure.

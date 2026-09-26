@@ -26,7 +26,7 @@ intake form; it is never stored in this repo, code, docs, logs or chat.
 ## 1. Where the UAT runs (decision needed)
 
 The V1 code is uncommitted (HEAD `212c149`), so it is not deployed. The only place it can run is the local build
-(`npm run build && npm run start`, `NODE_ENV=production`) using `.env.local`, which already points at the production
+(`npm run build && LIVE_COMMS_CONFIRM=I-APPROVE-LIVE-SENDS npm run start`, `NODE_ENV=production`, the explicit live-send approval) using `.env.local`, which already points at the production
 Supabase and the live AiSensy key. That is the runtime this plan assumes. Committing/deploying is a separate,
 unapproved step.
 
