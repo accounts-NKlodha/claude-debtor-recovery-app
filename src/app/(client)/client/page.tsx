@@ -1,3 +1,4 @@
+import { CLIENT_NOTHING_PENDING_NOTE, clientAttentionNotice } from "@/domain/client-notice";
 import { TriangleAlert } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,12 +48,8 @@ export default async function ClientOverviewPage() {
         <div className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning-bg px-4 py-3 text-warning">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
-            <p className="text-sm font-semibold">
-              {overview.actionsRequired} item{overview.actionsRequired === 1 ? "" : "s"} need your confirmation
-            </p>
-            <p className="text-xs opacity-90">
-              Confirming a reported payment or correcting a contact keeps recovery moving.
-            </p>
+            <p className="text-sm font-semibold">{clientAttentionNotice(overview.actionsRequired).title}</p>
+            <p className="text-xs opacity-90">{clientAttentionNotice(overview.actionsRequired).body}</p>
           </div>
         </div>
       ) : null}
@@ -98,7 +95,7 @@ export default async function ClientOverviewPage() {
           description={
             overview.upcomingAction?.when
               ? `Expected ${new Date(overview.upcomingAction.when).toLocaleDateString("en-IN", { dateStyle: "medium" })}`
-              : "We'll notify you here as soon as something needs your confirmation."
+              : CLIENT_NOTHING_PENDING_NOTE
           }
           action={
             overview.upcomingAction ? (
