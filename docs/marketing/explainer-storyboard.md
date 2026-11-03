@@ -40,4 +40,4 @@ colours. Note: the shipped app still uses the indigo Geist theme in
 - Pick one real (anonymised) case so the ₹ blanks and day counts become real numbers.
 - Confirm reminder cadence (0/7/14) and GST/MSME trigger days (21/30) against `docs/SPEC.md`.
 - Decide whether scene 7 shows one-click "Send" or an explicit CA review step (legally gated flows run in prepare/assist mode today).
-- Character illustrations (scenes 1, 5, 9) and portal emblems (7, 8) are still tinted placeholders.
+- Character illustrations (scenes 1, 5, 9) and portal marks (7, 8) are flat line art in the NKL palette, drawn in-house; swap for commissioned artwork only if a richer style is wanted. Portal marks are neutral shield/building glyphs, not the national emblem.
