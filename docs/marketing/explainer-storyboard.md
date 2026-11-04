@@ -1,6 +1,7 @@
 # Debtrecover explainer — storyboard v2 (mid-fidelity, NKL Design Language)
 
-Beat sheet for a ~80-second motion-graphics explainer aimed at CA firms.
+Beat sheet for an 86-second motion-graphics explainer aimed at CA firms.
+Interactive film: <https://claude.ai/artifact/DuwgzHTzybDHVhdHftH8tp>
 Mid-fidelity frames (960×540, themed with the firm's NKL Design Language) live on the design canvas:
 <https://claude.ai/artifact/9DeVwsWDvABAktPhe2NJQE>
 
@@ -24,7 +25,7 @@ steps (WhatsApp reminders, GST communication, MSME complaint, hearing brief).
 | 7 | GST communication | 0:42–0:50 | GST portal taxpayer-communication form auto-fills; SENT stamp with reference | No response? The app drafts the GST taxpayer communication, portal-ready. One review, one click, and the notice sits in the buyer's own GST account. |
 | 8 | MSME complaint | 0:50–0:58 | MSME Samadhaan form; evidence chips fly in; interest (3× bank rate) counts up; FILED stamp | Still unpaid? An MSME delayed-payment complaint goes in, with the reminder log, the GST reference and the statutory interest already computed. |
 | 9 | Hearing brief | 0:58–1:08 | Calendar ping, WhatsApp ping, one-page brief slides up: facts, amount, timeline, what to say, objections | The one step that needs you: the hearing. The day before, the app sends a one-page brief. What happened, what is owed, and exactly what to say. |
-| 10 | Outcome + CTA | 1:08–1:20 | Firm dashboard: recovered, cases, fee earned; "Payment received"; headline "Existing data. New revenue. No chasing."; Book a demo | Payment lands. Your client is paid. You earn professional fees, from data you already had. Debtrecover. Book a demo. |
+| 10 | Why buyers pay | 1:08–1:26 | Segmented bar 90 / 5 / 5: collected before first MSME hearing, at second hearing, to award; Section 19 card: 75% deposit before a court hears a challenge (MSMED Act 2006 s.19, as amended by Mediation Act 2023); tagline, logo, URL; no CTA button | Ninety per cent of collections land before the first MSME hearing. Five more at the second. And a buyer who wants to challenge the award must deposit seventy-five per cent first. The order has teeth. Debtrecover, by N K Lodha and Co. |
 
 ## Brand applied: NKL Design Language (firm design system)
 
@@ -34,6 +35,11 @@ details, IBM Plex Sans for UI, IBM Plex Mono for invoice numbers and GSTINs,
 Primary actions are ink, never brass. WhatsApp mockups keep WhatsApp's own
 colours. Note: the shipped app still uses the indigo Geist theme in
 `src/app/globals.css`; aligning the product UI to NKL is a separate decision.
+
+## Claims to substantiate before public release
+
+- The 90% / 5% / 5% split is presented as N K Lodha & Co case experience; confirm against actual case history.
+- Section 19 deposit: the 75% rule dates from the 2006 Act; the Mediation Act 2023 added "mediated settlement". Supreme Court has held the deposit mandatory (e.g. Tirupati Steels v. Shubh Industrial Component, 2022).
 
 ## Open items before animation
 
